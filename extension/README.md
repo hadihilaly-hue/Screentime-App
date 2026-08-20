@@ -34,6 +34,40 @@ you.
 
 After any edit to `config.js`, hit **Reload** on the extension card.
 
+## Confirming you are running the latest code
+
+Chrome does not pick up a `git pull` on its own — the extension keeps running
+the code it loaded until you press **Reload** on its card in
+`chrome://extensions`.
+
+The block page shows the version it is running at the bottom
+(`EarnedTime Blocker v0.2.0`). If that line is missing, or shows an older
+number than `manifest.json`, the browser is on stale code — hit Reload and open
+a blocked site again.
+
+From v0.2.0 the block page should visibly have all of:
+
+- a **I started a session — let me through** button
+- the URL you were heading to, printed under the balance
+- a diagnostics line naming whether you are signed in, how many unfinished
+  session rows the query returned, how many are still running, whether any
+  matches this site, and when the worker last checked
+- the version line
+
+## Reading the diagnostics line
+
+It is one line under the dashboard link, and it is meant to make a failure
+obvious rather than silent:
+
+- `NOT signed in` — open the extension icon and sign in.
+- `0 unfinished session row(s)` — the session never got written. Check the web
+  app's dashboard: did the timer actually start?
+- `2 still running: Snapchat 4m` but `none match youtube.com` — a session is
+  live for a different app than the site you are on.
+- `MATCHES youtube.com` and still blocked — the worker did not drop the rules.
+  The line will say so; reload the extension.
+- `Could not reach Supabase: …` — network or config problem, verbatim.
+
 ## How it works
 
 - Blocking is `declarativeNetRequest` redirect rules — one per site, plus one
@@ -43,7 +77,11 @@ After any edit to `config.js`, hit **Reload** on the extension card.
   under it).
 - Every minute, and again shortly after a running session ends, the extension
   asks Supabase for sessions with `ended_at` null whose `started_at + minutes`
-  is still in the future. Sites with such a session have their rules removed;
+  is still in the future. The exact query is
+  `sessions?select=app_name,minutes,started_at&ended_at=is.null` — deliberately
+  **not** filtered by date. `sessions.date` is written from the user's local
+  date while Postgres `current_date` is UTC, and those disagree every evening
+  west of Greenwich, so a date filter would return nothing all evening. Sites with such a session have their rules removed;
   everything else stays blocked.
 - The block page does not wait for that poll. On load, and every 5 seconds
   while it is open, it checks Supabase itself for a session covering this site.
