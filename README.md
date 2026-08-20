@@ -1,0 +1,75 @@
+# EarnedTime
+
+Turns a daily to-do list into currency for screen time. Phase 1 tests whether
+the loop changes behaviour on the honour system, before any iOS blocking is
+built. Full spec in [`phase-1-spec.md`](phase-1-spec.md).
+
+## Setup
+
+1. **Create a Supabase project**, then run the SQL in order in the SQL editor:
+   - `supabase/schema.sql` — the four tables, indexes and RLS policies
+   - `supabase/migration-02-hardening.sql` — the anti-cheat guards
+
+   `supabase/migration-01-proof-hint-and-delete-guard.sql` is only for a
+   database created before those changes were folded into `schema.sql`. On a
+   fresh project, skip it.
+
+2. **Create your user** under Authentication → Users → Add user (email +
+   password, confirmed). There is no signup flow; this app has one account.
+
+3. **Configure the app:**
+
+   ```sh
+   cp .env.example .env      # then fill in both values
+   npm install
+   npm run dev
+   ```
+
+   Both values come from Project Settings → API. Use the **anon public** key —
+   never `service_role`, which would be readable by anyone with the bundle.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Dev server |
+| `npm run build` | Typecheck then production build into `dist/` |
+| `npm run preview` | Serve the built bundle locally |
+
+## Deploying
+
+Any static host works. The build output is `dist/`, and the app uses client-side
+routing, so every path must fall back to `index.html`:
+
+- **Vercel** — `vercel.json` already has the rewrite. Set `VITE_SUPABASE_URL`
+  and `VITE_SUPABASE_ANON_KEY` in Project Settings → Environment Variables.
+- **Netlify** — `public/_redirects` already has the rule. Build command
+  `npm run build`, publish directory `dist`.
+
+Vite inlines env vars at build time, so **set them before the build and
+redeploy after changing them**. A production build missing either one throws on
+load and shows a failure message rather than an app with no auth gate.
+
+## Using it
+
+- **iPhone:** open the deployed URL in Safari → Share → Add to Home Screen. It
+  installs as a standalone PWA.
+- **Laptop:** set the deployed URL as your browser homepage.
+
+Phase 1 is honour-system: the timer does not block Snapchat, it just runs.
+
+## Status
+
+Built (Weekend 1, spec section 8):
+
+- Morning gate — type the day's list; routing blocks everything else until it
+  is confirmed
+- Task review — edit, tier, add, delete before confirming; cancel after
+- Dashboard — balance, tasks grouped by tier, mark done, spend minutes
+- Active session — full-screen countdown, time's-up state, session logging
+- Midnight reset — client-side, keyed on the local date
+
+Not built yet (Weekend 2):
+
+- Voice input, Claude task structuring, proof capture, Claude Vision
+  verification, full-completion bonus, streak counter, weekly review

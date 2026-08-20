@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { getDailyState, type DailyState } from './lib/db'
+import { useToday } from './lib/useToday'
 
 import MorningGate from './pages/MorningGate'
 import TaskReview from './pages/TaskReview'
@@ -89,6 +90,7 @@ function NotConfigured() {
 
 export default function App() {
   const { session, loading } = useSession()
+  const today = useToday()
 
   // In production a missing config throws at import time in lib/supabase, so
   // this branch is dev-only by construction.
@@ -99,7 +101,9 @@ export default function App() {
   return (
     <BrowserRouter>
       <div className="mx-auto max-w-2xl p-4">
-        <SignedIn userId={session.user.id} />
+        {/* Keyed on the date: at midnight this remounts, today's state is
+            refetched, and the morning gate closes again for the new day. */}
+        <SignedIn key={today} userId={session.user.id} />
       </div>
     </BrowserRouter>
   )
