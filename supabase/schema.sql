@@ -86,12 +86,16 @@ drop policy if exists tasks_select on public.tasks;
 create policy tasks_select on public.tasks
   for select using ((select auth.uid()) = user_id);
 
--- Insert-only date guard: a task cannot be backdated or post-dated into a
--- fresh daily cap. Not a CHECK constraint — current_date is STABLE, and CHECK
--- requires IMMUTABLE.
+-- Insert-only date guard: a task cannot be backdated into a fresh daily cap.
+-- Not a CHECK constraint (current_date is STABLE, CHECK requires IMMUTABLE),
+-- and a +/- 1 day window rather than equality because the client sends local
+-- dates while current_date is the database's UTC date.
 drop policy if exists tasks_insert on public.tasks;
 create policy tasks_insert on public.tasks
-  for insert with check ((select auth.uid()) = user_id and date = current_date);
+  for insert with check (
+    (select auth.uid()) = user_id
+    and date between current_date - 1 and current_date + 1
+  );
 
 drop policy if exists tasks_update on public.tasks;
 create policy tasks_update on public.tasks

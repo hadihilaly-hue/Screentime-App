@@ -15,16 +15,29 @@ create policy daily_state_update on public.daily_state
   for update using ((select auth.uid()) = user_id and not list_confirmed)
                  with check ((select auth.uid()) = user_id);
 
--- 2. Tasks can only be inserted dated today.
---    NOTE: this cannot be a CHECK constraint. Postgres requires functions in a
---    CHECK to be IMMUTABLE, and current_date is only STABLE, so
+-- 2. Tasks can only be inserted dated around today, closing the route of
+--    backdating a task into a fresh daily cap.
+--
+--    NOTE 1: this cannot be a CHECK constraint. Postgres requires functions in
+--    a CHECK to be IMMUTABLE, and current_date is only STABLE, so
 --    "check (date = current_date)" is rejected outright. An RLS policy may use
---    STABLE functions, so the guard goes there instead. It covers INSERT only —
---    deliberately not UPDATE, or marking a task done just after midnight would
---    fail its own with-check.
+--    STABLE functions, so the guard goes there instead.
+--
+--    NOTE 2: the window is +/- 1 day, not equality. The client sends the user's
+--    LOCAL date while current_date here is the database's (UTC), and those
+--    disagree for part of every day — in UTC-7, from 5pm local onwards UTC is
+--    already tomorrow. Strict equality would reject every task created in the
+--    evening. A one-day window absorbs every real timezone offset while still
+--    blocking arbitrary backdating.
+--
+--    INSERT only, deliberately: on UPDATE it would make marking a task done
+--    just after midnight fail its own with-check.
 drop policy if exists tasks_insert on public.tasks;
 create policy tasks_insert on public.tasks
-  for insert with check ((select auth.uid()) = user_id and date = current_date);
+  for insert with check (
+    (select auth.uid()) = user_id
+    and date between current_date - 1 and current_date + 1
+  );
 
 -- 3. The 60-minute daily earning cap (spec section 3), enforced in the database
 --    rather than only in completeTask().
