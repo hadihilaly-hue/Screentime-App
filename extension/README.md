@@ -1,7 +1,39 @@
 # EarnedTime Blocker (Chrome, Manifest V3)
 
-Blocks the tracked sites unless a session for them is running in EarnedTime.
-It reads the same Supabase project as the web app and writes nothing.
+Blocks the tracked sites on the EarnedTime schedule, and unlocks one when you
+spend minutes on it. It uses the same Supabase project as the web app.
+
+Since v0.4.0 this is also where sessions **start** (spec section 3A). The block
+page is the only place in the product that can create one, so the extension is
+no longer read-only — it writes the same two tables the app already writes
+(`sessions`, `balances`) under the same RLS policies.
+
+## The schedule (spec section 3A)
+
+Everything below is local device time.
+
+| Window | Hours | What the extension does |
+| --- | --- | --- |
+| Open | 7:00am – 9:00am | No rules at all. Supabase is not even consulted |
+| Hard block | 9:00am – 6:00pm | Everything blocked. A running session unlocks nothing |
+| Spend window | 6:00pm – 12:00am | Blocked until you spend minutes at the block page |
+| Hard cutoff | 12:00am – 7:00am | Everything blocked, same as the hard block |
+
+The clock decides before the `sessions` table does. That ordering is the whole
+point: there is no row you can write, and no session you can leave open, that
+opens a tracked site at 2pm. Unlocks are capped at the end of the window too, so
+a 20-minute session started at 11:55pm ends at midnight with the balance.
+
+Boundaries fire on an alarm rather than on the one-minute poll, so 9:00am blocks
+at 9:00am and evicts whatever was open.
+
+## Always allowed (spec section 3B)
+
+**Phone, FaceTime, Messages, Lyft, Waymo, DoorDash** are never blocked and never
+tracked, in any window. `always-allowed.js` filters them out of `sites` before a
+single rule is built, so adding `doordash.com` to `config.js` does nothing at
+all. Blocking here is opt-in per site; this is the one list that cannot be
+opted in.
 
 This layer is **friction, not a vault**. It is trivially disabled from
 `chrome://extensions`, and that is on purpose — Phase 1 measures whether the
@@ -41,25 +73,56 @@ the code it loaded until you press **Reload** on its card in
 `chrome://extensions`.
 
 The block page shows the version it is running at the bottom
-(`EarnedTime Blocker v0.3.0`). If that line is missing, or shows an older
+(`EarnedTime Blocker v0.4.0`). If that line is missing, or shows an older
 number than the `version` in `manifest.json`, the browser is on stale code —
 hit Reload and open a blocked site again.
 
-From v0.3.0 the block page should visibly have all of:
+From v0.4.0 the block page should visibly have all of:
 
-- a **I started a session — let me through** button
-- the URL you were heading to, printed under the balance
-- a diagnostics line naming whether you are signed in, how many unfinished
-  session rows the query returned, how many are still running, whether any
-  matches this site, and when the worker last checked
+- the current window as its first line (`Spend window · closes 12:00 AM`,
+  `Hard block`, `Hard cutoff`, `Open · until 9:00 AM`)
+- in the spend window: your balance, and **5 / 10 / 15 / 20** buttons, greyed
+  out below what you can afford. Tapping one starts the session and lets you
+  through — there is no separate "start" step
+- in every other window: no buttons at all, and a `Locked until 6:00 PM`
+  (or `7:00 AM`) slab. The balance is labelled *spendable at 6:00 PM*
+- one quote, picked at random per page load
+- the URL you were heading to
+- a **Check again** button
+- a diagnostics line naming the window, whether you are signed in, how many
+  unfinished session rows the query returned, how many are still running,
+  whether any matches this site, and when the worker last checked
 - a separate error line above it, empty unless something actually failed
 - the version line
+
+## Starting a session
+
+In the spend window, one tap on a length does all of this in order: check the
+balance, deduct the minutes, insert the session row, have the worker drop the
+rules, and navigate to the URL you originally asked for. If the session row is
+rejected after the deduction, the minutes are refunded rather than silently
+charged for nothing.
+
+Outside the spend window there is nothing to tap. `startSession` refuses on the
+clock as well, so even a page left open from 5:55pm cannot be clicked into a
+session at 5:59.
+
+## Quotes
+
+`quotes.js` holds ~66 short quotes on discipline, focus and delayed
+gratification; the block page picks one at random per load and does not rotate
+it while you are looking at it. Attributions are real — several widely shared
+"Aristotle" and "Confucius" lines are misattributions and are deliberately
+absent, and anything genuinely of unknown origin is marked Anonymous rather than
+pinned on whoever the internet says. Keep that rule when adding to it.
 
 ## Reading the diagnostics line
 
 It is one line under the dashboard link, and it is meant to make a failure
 obvious rather than silent:
 
+- `Locked until 6:00 PM` as the first item — you are outside the spend window
+  and no session can exist. This is the schedule, not a failure.
 - `NOT signed in` — open the extension icon and sign in.
 - `0 unfinished session row(s)` — the session never got written. Check the web
   app's dashboard: did the timer actually start?
@@ -78,6 +141,10 @@ refresh a few seconds later cannot overwrite the message worth reading.
 
 ## How it works
 
+- **The window is checked first** (`schedule.js`). Outside 6:00pm–midnight the
+  sessions query is not made at all: 7:00am–9:00am removes every rule,
+  everything else installs every rule. An alarm is set for the next boundary as
+  well as for the next session expiry, whichever is sooner.
 - Blocking is `declarativeNetRequest` redirect rules — one per site, plus one
   extra for YouTube that catches iframes **only when the parent page is
   youtube.com itself**, so a YouTube embed on someone else's blog still plays.
@@ -129,7 +196,15 @@ Add an entry to `sites` in `config.js` and reload the extension:
 
 `apps` lists the `app_name` values in the `sessions` table that unlock the
 domain, so it should match an entry in the web app's `TRACKED_APPS`
-(`src/lib/constants.ts`) for a session to ever exist for it.
+(`src/lib/constants.ts`) for a session to ever exist for it. The block page
+starts sessions under `apps[0]`.
+
+Anything matching the always-allowed list is dropped, whatever you write here.
+
+The schedule in `schedule.js` is deliberately not configurable — the point of a
+schedule you cannot edit at 2pm is that you cannot edit it at 2pm. It is
+mirrored by `src/lib/schedule.ts` in the web app; the two files must agree, and
+are duplicated only because this extension has no build step.
 
 Nothing else needs editing — `host_permissions` is `<all_urls>` so that adding
 a site here is the only step.
@@ -139,5 +214,8 @@ a site here is the only step.
 - Chrome only (Manifest V3). No Firefox/Safari build.
 - A session started elsewhere takes up to 5 seconds to release an open block
   page, or up to a minute for a tab that is not on one. **Re-check now** in the
-  popup, or the button on the block page, skips the wait.
+  popup, or **Check again** on the block page, skips the wait. A session started
+  on the block page itself does not wait at all.
+- The balance check when starting a session is read-then-write, like the web
+  app's. Two block pages tapped in the same second could both pass it.
 - The clock comes from your machine, same as the web app.

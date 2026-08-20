@@ -1,9 +1,16 @@
 import { CONFIG } from './config.js'
-import { query, todayISO, getSession } from './supabase.js'
+import { query, getSession } from './supabase.js'
+import { phaseAt, spendOpensAt, clockLabel, phaseSummary } from './schedule.js'
+import { randomQuote } from './quotes.js'
+import { readBalance, startSession } from './spend.js'
+import { isAlwaysAllowed } from './always-allowed.js'
 
 const params = new URLSearchParams(location.search)
 const domain = params.get('site') ?? ''
 const site = CONFIG.sites.find((s) => s.domain === domain)
+
+/** Spec section 3, mirrored by SESSION_LENGTHS in src/lib/constants.ts. */
+const SESSION_LENGTHS = [5, 10, 15, 20]
 
 /**
  * The return URL, only if it is somewhere this page could legitimately have
@@ -49,6 +56,13 @@ if (originalUrl) {
   el('destination').textContent = originalUrl
   el('destination').hidden = false
 }
+
+// One quote per page load, picked at random and never rotated while you look at
+// it — a wall that reshuffles itself is a thing to sit and watch.
+const quote = randomQuote()
+el('quote-text').textContent = `“${quote.text}”`
+el('quote-who').textContent = `— ${quote.who}`
+el('quote').hidden = false
 
 /**
  * Errors live on their own line, not on the diagnostics line.
@@ -98,7 +112,7 @@ async function readSessions() {
 }
 
 async function renderDiagnostics(state) {
-  const bits = []
+  const bits = [phaseSummary()]
   bits.push(state.signedIn ? `Signed in as ${state.email ?? '(unknown)'}` : 'NOT signed in')
 
   if (state.signedIn) {
@@ -135,7 +149,95 @@ async function renderDiagnostics(state) {
   el('note').textContent = bits.join(' · ')
 }
 
-/* --- release ------------------------------------------------------------- */
+/* --- the window ----------------------------------------------------------- */
+
+let balance = null
+let busy = false
+
+/**
+ * The whole page above the quote is a function of the window (spec section 3A).
+ *
+ * Spend window: shield in accent, balance, four length buttons — tapping one is
+ * what starts the session. Every other window: no buttons whatsoever, and a
+ * slab saying when the wall comes down. There is no state, and no amount of
+ * clicking, that produces a session button at 2pm.
+ */
+function renderWindow() {
+  const phase = phaseAt()
+  const spending = phase.kind === 'spend'
+
+  el('shield').classList.toggle('is-spend', spending)
+  el('spend').hidden = !spending
+  // The open window gets neither panel: it is not a wall, and it releases
+  // itself a moment later — an empty slab would just flash on the way out.
+  el('locked').hidden = spending || phase.kind === 'open'
+
+  if (spending) {
+    el('window').textContent = `Spend window · closes ${clockLabel(phase.endsAt)}`
+    el('lede').textContent = 'Pick a length. That starts the session and lets you through.'
+  } else if (phase.kind === 'open') {
+    el('window').textContent = `Open · until ${clockLabel(phase.endsAt)}`
+    el('lede').textContent = 'Nothing is blocked right now — sending you through.'
+  } else {
+    el('window').textContent = phase.kind === 'cutoff' ? 'Hard cutoff' : 'Hard block'
+    el('lede').textContent = 'No sessions, no exceptions. Earning still works — go do a task.'
+    el('locked-until').textContent = `Locked until ${clockLabel(phase.endsAt)}`
+    el('locked-why').textContent =
+      phase.kind === 'cutoff'
+        ? 'The day resets at 7:00 AM. Minutes can be spent again between 6:00 PM and midnight.'
+        : 'Minutes can be spent between 6:00 PM and midnight. Anything you earn before then is waiting for you.'
+  }
+
+  renderBalance(phase)
+  renderLengths(phase)
+}
+
+function renderBalance(phase) {
+  const spending = phase.kind === 'spend'
+  el('balance').textContent = balance === null ? '—' : String(balance)
+  el('balance').classList.toggle('is-spendable', spending && (balance ?? 0) > 0)
+  el('balance-label').innerHTML = spending
+    ? 'minutes<br />available'
+    : `minutes<br />spendable at ${clockLabel(spendOpensAt())}`
+}
+
+function renderLengths(phase) {
+  const lengths = el('lengths')
+  lengths.innerHTML = ''
+  if (phase.kind !== 'spend') return
+
+  for (const minutes of SESSION_LENGTHS) {
+    const button = document.createElement('button')
+    button.className = 'length'
+    button.type = 'button'
+    button.disabled = busy || balance === null || balance < minutes
+    button.title = button.disabled && balance !== null && balance < minutes
+      ? `Needs ${minutes} minutes, you have ${balance}.`
+      : ''
+    const num = document.createElement('span')
+    num.className = 'num'
+    num.textContent = String(minutes)
+    const unit = document.createElement('span')
+    unit.className = 'unit'
+    unit.textContent = 'MIN'
+    button.append(num, unit)
+    button.addEventListener('click', () => void pick(minutes))
+    lengths.append(button)
+  }
+
+  const left = Math.floor((phase.endsAt - Date.now()) / 60_000)
+  if (balance === null) {
+    el('spend-hint').textContent = 'Sign in from the extension icon to spend minutes.'
+  } else if (balance === 0) {
+    el('spend-hint').textContent = 'Nothing to spend yet. Finish a task in the app to earn some.'
+  } else if (left < Math.max(...SESSION_LENGTHS)) {
+    el('spend-hint').textContent = `The window closes in ${left} min — anything past midnight is cut off.`
+  } else {
+    el('spend-hint').textContent = ''
+  }
+}
+
+/* --- release -------------------------------------------------------------- */
 
 const POLL_VISIBLE_MS = 5_000
 const POLL_HIDDEN_MS = 60_000
@@ -179,17 +281,47 @@ async function navigateBack() {
   released = true
   stopPolling()
   await markReleased()
-  el('note').textContent = 'Session running — sending you back…'
+  el('note').textContent = 'Unlocked — sending you back…'
   if (returnUrl) location.replace(returnUrl)
+}
+
+/**
+ * Have the worker rewrite its rules, confirm this domain really is unlocked,
+ * then go. Rules must actually be gone before navigating, or the redirect just
+ * fires again and you land straight back here.
+ */
+async function dropRulesAndGo(reason) {
+  let reply
+  try {
+    reply = await chrome.runtime.sendMessage({ type: 'sync' })
+  } catch (e) {
+    showError(`${reason}, but the background worker did not answer (${e.message}). Try again.`)
+    return false
+  }
+  if (!reply?.ok) {
+    showError(`${reason}, but the rule refresh failed: ${reply?.error ?? 'no reply'}`)
+    return false
+  }
+  if (!reply.unlocked?.[domain]) {
+    showError(`${reason}, but the worker still has ${domain} blocked. Reload the extension.`)
+    return false
+  }
+  await navigateBack()
+  return true
 }
 
 /**
  * The instant path. Waiting out the background poll made a freshly started
  * session look like it had not worked at all, so the block page checks for
  * itself, has the worker drop the rules, and only then navigates back.
+ *
+ * Outside the spend window this never releases, whatever the sessions table
+ * says — the schedule decides first (spec section 3A).
  */
 async function releaseIfUnlocked({ manual = false } = {}) {
   if (released) return false
+  const phase = phaseAt()
+  renderWindow()
 
   let state
   try {
@@ -202,6 +334,12 @@ async function releaseIfUnlocked({ manual = false } = {}) {
   clearError()
 
   await renderDiagnostics(state)
+
+  if (phase.kind === 'open') {
+    // 7:00am-9:00am: nothing is blocked, so nothing has to be spent either.
+    return await dropRulesAndGo('The open window is running')
+  }
+  if (phase.kind !== 'spend') return false
   if (!state.mine) return false
 
   // Released a moment ago and landed straight back here: the worker put the
@@ -215,27 +353,48 @@ async function releaseIfUnlocked({ manual = false } = {}) {
     return false
   }
 
-  // Rules must actually be gone before navigating, or the redirect fires again.
-  let reply
+  return await dropRulesAndGo('Session is running')
+}
+
+/* --- starting a session --------------------------------------------------- */
+
+/**
+ * The open IS the session start (spec section 3A). One tap spends the minutes,
+ * writes the session row, drops the block, and sends you on to where you were
+ * heading.
+ */
+async function pick(minutes) {
+  if (busy || released) return
+  busy = true
+  clearError()
+  renderWindow()
+  el('spend-hint').textContent = `Starting ${minutes} minutes…`
+
   try {
-    reply = await chrome.runtime.sendMessage({ type: 'sync' })
+    await startSession(site, minutes)
   } catch (e) {
-    showError(
-      `Session is running, but the background worker did not answer (${e.message}). Try the button again.`,
-    )
-    return false
-  }
-  if (!reply?.ok) {
-    showError(`Session is running, but the rule refresh failed: ${reply?.error ?? 'no reply'}`)
-    return false
-  }
-  if (!reply.unlocked?.[domain]) {
-    showError(`Session is running for ${domain}, but the worker still has it blocked. Reload the extension.`)
-    return false
+    showError(e.message)
+    busy = false
+    await refreshBalance()
+    renderWindow()
+    return
   }
 
-  await navigateBack()
-  return true
+  // An explicit start is the user overriding any anti-flap hold.
+  autoNavigate = true
+  await clearMark()
+  await refreshBalance()
+  busy = false
+
+  if (!(await dropRulesAndGo('Session started'))) renderWindow()
+}
+
+async function refreshBalance() {
+  try {
+    balance = await readBalance()
+  } catch {
+    balance = null
+  }
 }
 
 /* --- polling -------------------------------------------------------------- */
@@ -257,12 +416,16 @@ async function tick() {
   // pending timeout to fire later and start a second chain — every
   // hidden->visible toggle added one, multiplying the poll rate.
   stopPolling()
-  if (released || inFlight) {
+  if (released || inFlight || busy) {
     schedule()
     return
   }
   inFlight = true
   try {
+    // The balance is re-read every tick so the buttons enable themselves the
+    // moment a task is verified in the app, and the window is re-rendered so
+    // 6:00pm turns this page from a wall into a menu without a reload.
+    await refreshBalance()
     await releaseIfUnlocked()
   } finally {
     inFlight = false
@@ -279,33 +442,25 @@ document.addEventListener('visibilitychange', () => {
   else schedule()
 })
 
-async function showBalance() {
-  const stored = await getSession()
-  if (!stored) {
-    el('balance').textContent = '—'
-    return
-  }
-  try {
-    const rows = await query(`balances?select=minutes_available&date=eq.${todayISO()}`)
-    el('balance').textContent = rows === null ? '—' : String(rows[0]?.minutes_available ?? 0)
-  } catch {
-    el('balance').textContent = '?'
-  }
-}
-
 el('retry').addEventListener('click', async () => {
-  if (released) return
+  if (released || busy) return
   clearError()
   el('note').textContent = 'Checking…'
   // An explicit press is the user overriding the anti-flap hold.
   autoNavigate = true
   await clearMark()
+  await refreshBalance()
   await releaseIfUnlocked({ manual: true })
-  showBalance()
 })
 
 async function start() {
-  showBalance()
+  if (site && isAlwaysAllowed(site)) {
+    // Belt and braces: the worker never writes a rule for one of these, so
+    // landing here at all means something is misconfigured.
+    showError(`${site.label ?? domain} is on the always-allowed list and should never be blocked.`)
+  }
+  renderWindow()
+  await refreshBalance()
   // Set the hold silently. If this really is a flap there is a session running,
   // and releaseIfUnlocked says so with the specific message; if there is no
   // session, there is nothing to explain and the page is just blocked.

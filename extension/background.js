@@ -1,16 +1,38 @@
 // Applies and lifts the blocks.
 //
 // Blocking is declarativeNetRequest redirect rules, one (or two) per configured
-// site. A site's rules are removed while a session for it is running in the
-// sessions table, and put back the moment that window closes.
+// site. Two things decide whether a site's rules are present, in this order:
+//
+//   1. The schedule (spec section 3A). Outside 6:00pm-12:00am the sessions
+//      table is not even consulted — 7:00am-9:00am is open, everything else is
+//      a hard block. This is what makes the daytime a wall rather than a
+//      suggestion: no row in any table unlocks a tracked site at 2pm.
+//   2. Inside the spend window, a running session in the sessions table, as
+//      before. Its unlock is capped at the end of the window, so a session
+//      started at 11:55pm still ends at midnight.
+//
+// Sites on the always-allowed list (spec section 3B) never reach the rule
+// builder at all, in any window.
 
 import { CONFIG } from './config.js'
 import { query } from './supabase.js'
+import { phaseAt } from './schedule.js'
+import { blockableSites } from './always-allowed.js'
 
 const RULE_BASE = 1000
 const POLL_ALARM = 'et-poll'
 const EXPIRY_ALARM = 'et-expiry'
 const HEALTH_KEY = 'et_health'
+
+/**
+ * The sites rules may be written for: config, minus the always-allowed six.
+ *
+ * Rule ids are derived from this list's indices, and it is derived from a
+ * constant config, so the ids are stable across runs the same way they were.
+ */
+function sites() {
+  return blockableSites(CONFIG.sites)
+}
 
 /**
  * Consecutive failed polls tolerated before a site is re-blocked.
@@ -102,16 +124,18 @@ function rulesFor(site, index) {
  * Domains with a session still running, mapped to when that window closes.
  * Returns null when signed out — which blocks everything, deliberately.
  */
-async function unlockedDomains() {
+async function unlockedDomains(windowEndsAt) {
   const rows = await query('sessions?select=app_name,minutes,started_at&ended_at=is.null')
   if (rows === null) return null
 
   const now = Date.now()
   const unlocked = new Map()
   for (const row of rows) {
-    const endsAt = new Date(row.started_at).getTime() + row.minutes * 60_000
+    // Capped at the end of the spend window: minutes expire at midnight
+    // (spec section 3), so a session cannot carry an unlock past it.
+    const endsAt = Math.min(new Date(row.started_at).getTime() + row.minutes * 60_000, windowEndsAt)
     if (endsAt <= now) continue
-    const site = CONFIG.sites.find((s) => s.apps.includes(row.app_name))
+    const site = sites().find((s) => s.apps.includes(row.app_name))
     if (!site) continue
     unlocked.set(site.domain, Math.max(unlocked.get(site.domain) ?? 0, endsAt))
   }
@@ -124,7 +148,7 @@ async function unlockedDomains() {
  */
 async function evictOpenTabs(domain) {
   const tabs = await chrome.tabs.query({ url: [`*://${domain}/*`, `*://*.${domain}/*`] })
-  const site = CONFIG.sites.find((s) => s.domain === domain)
+  const site = sites().find((s) => s.domain === domain)
   for (const tab of tabs) {
     // Carry the URL the tab was on, so restarting a session returns you to it.
     if (tab.id !== undefined) await chrome.tabs.update(tab.id, { url: blockedUrl(site, tab.url) })
@@ -132,43 +156,60 @@ async function evictOpenTabs(domain) {
 }
 
 async function runSync() {
+  const blockable = sites()
+  const phase = phaseAt()
   const health = await readHealth()
   let unlocked = null
   let failed = false
-
-  try {
-    unlocked = await unlockedDomains()
-  } catch {
-    // Offline, misconfigured, or Supabase erroring.
-    failed = true
-  }
-
   let heldByGrace = false
-  if (failed) {
-    const grace = graceFailures()
-    health.failures = Math.min(health.failures + 1, grace + 1)
-    if (health.failures <= grace) {
-      // Still inside the grace window: hold what was true at the last good
-      // poll, minus anything that has since run out.
-      unlocked = stillRunning(health.lastGood)
-      heldByGrace = true
-    } else {
-      // Grace exhausted. Fail closed, and stop trusting the held set.
-      unlocked = new Map()
-      health.lastGood = {}
-    }
-  } else if (unlocked === null) {
-    // Signed out is a definite answer, not a failed poll. No grace for it.
+
+  if (phase.kind === 'open') {
+    // 7:00am-9:00am. Nothing is blocked and nothing is metered, so the sessions
+    // table is irrelevant — every site is unlocked until the window ends.
+    unlocked = new Map(blockable.map((site) => [site.domain, phase.endsAt]))
+    health.failures = 0
+    health.lastGood = {}
+  } else if (phase.kind !== 'spend') {
+    // Hard block or hard cutoff. The schedule alone decides, so there is
+    // nothing to ask Supabase and nothing a failed poll could change. Grace
+    // does not apply: this is not a failure to answer, it is the answer.
     unlocked = new Map()
     health.failures = 0
     health.lastGood = {}
   } else {
-    health.failures = 0
-    health.lastGood = Object.fromEntries(unlocked)
+    try {
+      unlocked = await unlockedDomains(phase.endsAt)
+    } catch {
+      // Offline, misconfigured, or Supabase erroring.
+      failed = true
+    }
+
+    if (failed) {
+      const grace = graceFailures()
+      health.failures = Math.min(health.failures + 1, grace + 1)
+      if (health.failures <= grace) {
+        // Still inside the grace window: hold what was true at the last good
+        // poll, minus anything that has since run out.
+        unlocked = stillRunning(health.lastGood)
+        heldByGrace = true
+      } else {
+        // Grace exhausted. Fail closed, and stop trusting the held set.
+        unlocked = new Map()
+        health.lastGood = {}
+      }
+    } else if (unlocked === null) {
+      // Signed out is a definite answer, not a failed poll. No grace for it.
+      unlocked = new Map()
+      health.failures = 0
+      health.lastGood = {}
+    } else {
+      health.failures = 0
+      health.lastGood = Object.fromEntries(unlocked)
+    }
   }
 
   const allIds = CONFIG.sites.flatMap((_, i) => ruleIds(i))
-  const addRules = CONFIG.sites.flatMap((site, i) =>
+  const addRules = blockable.flatMap((site, i) =>
     unlocked.has(site.domain) ? [] : rulesFor(site, i),
   )
 
@@ -176,16 +217,21 @@ async function runSync() {
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: allIds, addRules })
 
   // Only evict tabs for sites that were unblocked a moment ago, so an open tab
-  // is not yanked on every poll while nothing has changed.
+  // is not yanked on every poll while nothing has changed. This is also what
+  // clears the screen at 9:00am and at midnight: the boundary alarm re-runs
+  // this, the site flips to blocked, and whatever is open gets sent to the
+  // block page.
   const wasBlocked = new Set(before.map((r) => r.id))
-  for (const [i, site] of CONFIG.sites.entries()) {
+  for (const [i, site] of blockable.entries()) {
     const [mainId] = ruleIds(i)
     const nowBlocked = !unlocked.has(site.domain)
     if (nowBlocked && !wasBlocked.has(mainId)) await evictOpenTabs(site.domain)
   }
 
-  // Re-check exactly when the earliest running session ends.
-  const nextEnd = Math.min(...[...unlocked.values()], Infinity)
+  // Re-check exactly when the earliest running session ends, or when the window
+  // changes, whichever comes first. Without the boundary the 9:00am block would
+  // land up to a poll late, and an open tab would keep going until it did.
+  const nextEnd = Math.min(...[...unlocked.values()], phase.endsAt)
   if (Number.isFinite(nextEnd)) {
     chrome.alarms.create(EXPIRY_ALARM, { when: nextEnd + 1_000 })
   }
@@ -197,6 +243,8 @@ async function runSync() {
       unlocked: Object.fromEntries(unlocked),
       failures: health.failures,
       heldByGrace,
+      phase: phase.kind,
+      phaseEndsAt: phase.endsAt,
     },
   })
 }

@@ -3,6 +3,17 @@
 //
 // Add a site by adding an entry to `sites` — nothing else needs editing.
 // (host_permissions is <all_urls> precisely so adding a site here is enough.)
+//
+// Two things here are NOT configurable, on purpose:
+//
+//   * The schedule (spec section 3A) lives in schedule.js — 7-9am open,
+//     9am-6pm hard block, 6pm-midnight spend window, midnight-7am hard cutoff.
+//     The point of a schedule you cannot edit at 2pm is that you cannot edit it
+//     at 2pm.
+//   * The always-allowed list (spec section 3B) lives in always-allowed.js —
+//     Phone, FaceTime, Messages, Lyft, Waymo, DoorDash. Anything in `sites`
+//     that matches it is dropped before a rule is ever written, so adding
+//     doordash.com below does nothing at all.
 
 export const CONFIG = {
   // Project Settings -> API. The anon public key, never service_role.

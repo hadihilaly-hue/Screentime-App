@@ -1,6 +1,7 @@
 import { requireClient } from './supabase'
-import { DAILY_CAP_MINUTES, TIER_MINUTES, type Tier } from './constants'
+import { DAILY_CAP_MINUTES, TIER_MINUTES, isAlwaysAllowed, type Tier } from './constants'
 import { todayISO } from './date'
+import { canSpend } from './schedule'
 
 export type TaskStatus = 'todo' | 'pending' | 'verified' | 'rejected' | 'cancelled'
 
@@ -268,13 +269,30 @@ export async function endStaleSessions(userId: string): Promise<void> {
   if (error) throw error
 }
 
-/** Minutes are spent up front, so a reload mid-session cannot buy them twice. */
+/**
+ * Start a session. **Deprecated as a user-facing action** (spec section 3A).
+ *
+ * Sessions are started at the block page now — the open IS the session start —
+ * so nothing in the app calls this any more. It is kept because it is still the
+ * canonical description of the write (deduct first, insert second), and because
+ * the phone half of Phase 1 has no block page yet and will need it back.
+ *
+ * The two invariants it now enforces are the ones that make the schedule real:
+ * outside the spend window there is no session to start at all, and an
+ * always-allowed app is never metered.
+ *
+ * Minutes are spent up front, so a reload mid-session cannot buy them twice.
+ *
+ * @deprecated Sessions start from extension/blocked.js. See spec section 3A.
+ */
 export async function startSession(
   userId: string,
   appName: string,
   minutes: number,
 ): Promise<AppSession> {
   const db = requireClient()
+  if (!canSpend()) throw new Error('Sessions can only be started in the spend window.')
+  if (isAlwaysAllowed(appName)) throw new Error(`${appName} is always allowed and is never metered.`)
   const balance = await getBalance(userId)
   if (balance.minutes_available < minutes) throw new Error('Not enough minutes.')
 

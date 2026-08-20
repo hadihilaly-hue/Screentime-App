@@ -1,0 +1,81 @@
+// Quotes for the block page — one picked at random per page load.
+//
+// Rule for adding to this list: the attribution must be real. Where a line is
+// a proverb, or is genuinely of unknown origin, it is marked Anonymous rather
+// than pinned on whichever famous name the internet has attached to it. Several
+// widely shared "Aristotle" and "Confucius" lines are misattributions and are
+// deliberately absent; the Durant line below is the real source of one of them.
+
+export const QUOTES = [
+  { text: 'We are what we repeatedly do. Excellence, then, is not an act, but a habit.', who: 'Will Durant' },
+  { text: 'It is not that we have a short time to live, but that we waste a lot of it.', who: 'Seneca' },
+  { text: 'While we are postponing, life speeds by.', who: 'Seneca' },
+  { text: 'Every day is a fresh beginning. Every day is the world made new.', who: 'Susan Coolidge' },
+  { text: 'You have power over your mind — not outside events. Realize this, and you will find strength.', who: 'Marcus Aurelius' },
+  { text: 'Waste no more time arguing about what a good man should be. Be one.', who: 'Marcus Aurelius' },
+  { text: 'At dawn, when you have trouble getting out of bed, tell yourself: I have to go to work — as a human being.', who: 'Marcus Aurelius' },
+  { text: 'No man is free who is not master of himself.', who: 'Epictetus' },
+  { text: 'First say to yourself what you would be; and then do what you have to do.', who: 'Epictetus' },
+  { text: 'If you wish to be a writer, write.', who: 'Epictetus' },
+  { text: 'Well begun is half done.', who: 'Horace' },
+  { text: 'He who has begun has half done. Dare to be wise; begin!', who: 'Horace' },
+  { text: 'Lost time is never found again.', who: 'Benjamin Franklin' },
+  { text: 'You may delay, but time will not.', who: 'Benjamin Franklin' },
+  { text: 'Dost thou love life? Then do not squander time, for that is the stuff life is made of.', who: 'Benjamin Franklin' },
+  { text: 'Great works are performed not by strength but by perseverance.', who: 'Samuel Johnson' },
+  { text: 'The chains of habit are too weak to be felt until they are too strong to be broken.', who: 'Samuel Johnson' },
+  { text: 'It is not enough to be busy. The question is: what are we busy about?', who: 'Henry David Thoreau' },
+  { text: 'How we spend our days is, of course, how we spend our lives.', who: 'Annie Dillard' },
+  { text: 'A schedule defends from chaos and whim.', who: 'Annie Dillard' },
+  { text: 'Nothing is less productive than to make more efficient what should not be done at all.', who: 'Peter Drucker' },
+  { text: 'Until we can manage time, we can manage nothing else.', who: 'Peter Drucker' },
+  { text: 'Sow an action and you reap a habit; sow a habit and you reap a character.', who: 'Charles Reade' },
+  { text: 'It is easier to resist at the beginning than at the end.', who: 'Leonardo da Vinci' },
+  { text: 'The strongest of all warriors are these two — Time and Patience.', who: 'Leo Tolstoy' },
+  { text: 'Everyone thinks of changing the world, but no one thinks of changing himself.', who: 'Leo Tolstoy' },
+  { text: 'What we plant in the soil of contemplation, we shall reap in the harvest of action.', who: 'Meister Eckhart' },
+  { text: 'Knowing is not enough; we must apply. Willing is not enough; we must do.', who: 'Johann Wolfgang von Goethe' },
+  { text: 'Attention is the beginning of devotion.', who: 'Mary Oliver' },
+  { text: 'A journey of a thousand miles begins with a single step.', who: 'Lao Tzu' },
+  { text: 'Mastering others is strength. Mastering yourself is true power.', who: 'Lao Tzu' },
+  { text: 'Do the hard jobs first. The easy jobs will take care of themselves.', who: 'Dale Carnegie' },
+  { text: 'Discipline is the bridge between goals and accomplishment.', who: 'Jim Rohn' },
+  { text: 'We must all suffer one of two things: the pain of discipline or the pain of regret.', who: 'Jim Rohn' },
+  { text: 'Motivation is what gets you started. Habit is what keeps you going.', who: 'Jim Ryun' },
+  { text: 'Amateurs sit and wait for inspiration, the rest of us just get up and go to work.', who: 'Stephen King' },
+  { text: 'I write only when inspiration strikes. Fortunately it strikes every morning at nine o’clock sharp.', who: 'W. Somerset Maugham' },
+  { text: 'Inspiration is for amateurs — the rest of us just show up and get to work.', who: 'Chuck Close' },
+  { text: 'Inspiration exists, but it has to find you working.', who: 'Pablo Picasso' },
+  { text: 'You can’t use up creativity. The more you use, the more you have.', who: 'Maya Angelou' },
+  { text: 'I don’t wait for moods. You accomplish nothing if you do that.', who: 'Pearl S. Buck' },
+  { text: 'The successful person has the habit of doing the things failures don’t like to do.', who: 'Albert E. N. Gray' },
+  { text: 'Perseverance, secret of all triumphs.', who: 'Victor Hugo' },
+  { text: 'Far and away the best prize that life has to offer is the chance to work hard at work worth doing.', who: 'Theodore Roosevelt' },
+  { text: 'Order and simplification are the first steps toward the mastery of a subject.', who: 'Thomas Mann' },
+  { text: 'If there is no struggle, there is no progress.', who: 'Frederick Douglass' },
+  { text: 'The best way out is always through.', who: 'Robert Frost' },
+  { text: 'Everybody has a plan until they get punched in the mouth.', who: 'Mike Tyson' },
+  { text: 'I hated every minute of training, but I said, don’t quit. Suffer now and live the rest of your life as a champion.', who: 'Muhammad Ali' },
+  { text: 'I’ve failed over and over and over again in my life. And that is why I succeed.', who: 'Michael Jordan' },
+  { text: 'Rest at the end, not in the middle.', who: 'Kobe Bryant' },
+  { text: 'The only way to do great work is to love what you do.', who: 'Steve Jobs' },
+  { text: 'The difference between successful people and really successful people is that really successful people say no to almost everything.', who: 'Warren Buffett' },
+  { text: 'Clarity about what matters provides clarity about what does not.', who: 'Cal Newport' },
+  { text: 'You do not rise to the level of your goals. You fall to the level of your systems.', who: 'James Clear' },
+  { text: 'Enthusiasm is common. Endurance is rare.', who: 'Angela Duckworth' },
+  { text: 'A wealth of information creates a poverty of attention.', who: 'Herbert A. Simon' },
+  { text: 'Tell me to what you pay attention and I will tell you who you are.', who: 'José Ortega y Gasset' },
+  { text: 'My experience is what I agree to attend to.', who: 'William James' },
+  { text: 'Attention is the rarest and purest form of generosity.', who: 'Simone Weil' },
+  { text: 'Fall seven times, stand up eight.', who: 'Japanese proverb' },
+  { text: 'The best time to plant a tree was twenty years ago. The second best time is now.', who: 'Anonymous' },
+  { text: 'Little by little, one travels far.', who: 'Anonymous' },
+  { text: 'Slow is smooth, and smooth is fast.', who: 'Anonymous' },
+  { text: 'Do the thing and you shall have the power.', who: 'Ralph Waldo Emerson' },
+  { text: 'The first and best victory is to conquer self.', who: 'Plato' },
+]
+
+/** One quote, uniformly at random. Called once per page load, never on a timer. */
+export function randomQuote() {
+  return QUOTES[Math.floor(Math.random() * QUOTES.length)]
+}

@@ -5,7 +5,6 @@ import {
   getActiveSession,
   getBalance,
   listTasks,
-  startSession,
   type Balance,
   type Task,
 } from '../lib/db'
@@ -14,9 +13,9 @@ import {
   SESSION_LENGTHS,
   TIER_LABELS,
   TIER_MINUTES,
-  TRACKED_APPS,
   type Tier,
 } from '../lib/constants'
+import { clockLabel, phaseAt, spendOpensAt, untilLabel } from '../lib/schedule'
 import { IconCheck, Spinner } from '../ui'
 
 const STATUS_LABEL: Record<Task['status'], string> = {
@@ -31,7 +30,7 @@ const STATUS_LABEL: Record<Task['status'], string> = {
 export default function Dashboard({ userId }: { userId: string }) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [balance, setBalance] = useState<Balance | null>(null)
-  const [app, setApp] = useState(TRACKED_APPS[0])
+  const [now, setNow] = useState(() => Date.now())
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -55,6 +54,14 @@ export default function Dashboard({ userId }: { userId: string }) {
     void reload()
   }, [reload])
 
+  // The window and the countdown to it are read off the clock, so the clock has
+  // to tick: at 6:00pm this screen has to stop saying "spendable at 6:00 PM"
+  // without anyone reloading it.
+  useEffect(() => {
+    const id = setInterval(() => setNow(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [])
+
   async function onComplete(task: Task) {
     setBusy(true)
     setError(null)
@@ -75,23 +82,15 @@ export default function Dashboard({ userId }: { userId: string }) {
     setBusy(false)
   }
 
-  async function onStart(minutes: number) {
-    setBusy(true)
-    setError(null)
-    try {
-      await startSession(userId, app, minutes)
-      navigate('/session')
-    } catch (e) {
-      setError((e as Error).message)
-      setBusy(false)
-    }
-  }
-
   if (!balance) return <Spinner />
 
   const open = tasks.filter((t) => t.status === 'todo')
   const capPct = Math.min(100, (balance.minutes_earned_total / DAILY_CAP_MINUTES) * 100)
-  const spendable = balance.minutes_available > 0
+  const phase = phaseAt(now)
+  // "Spendable" is the balance *and* the window, per spec section 3A. Before
+  // 6pm a growing number that buys nothing has to say so, or it reads as a bug.
+  const spendableNow = phase.kind === 'spend' && balance.minutes_available > 0
+  const opensAt = spendOpensAt(now)
 
   return (
     <section className="fade-up">
@@ -101,16 +100,34 @@ export default function Dashboard({ userId }: { userId: string }) {
         <p className="eyebrow">Balance</p>
         <div className="mt-2 flex items-end gap-3">
           <span
-            className={`numeral text-[5.5rem] ${spendable ? 'text-acid' : 'text-fg'}`}
+            className={`numeral text-[5.5rem] ${spendableNow ? 'text-acid' : 'text-fg'}`}
           >
             {balance.minutes_available}
           </span>
           <span className="pb-3 text-[0.9375rem] leading-tight font-semibold text-muted">
-            minutes
-            <br />
-            available
+            {phase.kind === 'spend' ? (
+              <>
+                minutes
+                <br />
+                available
+              </>
+            ) : (
+              <>
+                minutes
+                <br />
+                <span className="text-ember">spendable at {clockLabel(opensAt)}</span>
+              </>
+            )}
           </span>
         </div>
+
+        {phase.kind !== 'spend' && (
+          <p className="mt-3 text-[0.8125rem] leading-snug text-faint">
+            {phase.kind === 'open'
+              ? `Open window — nothing is blocked until ${clockLabel(phase.endsAt)}. The spend window is ${clockLabel(opensAt)} to midnight.`
+              : `Locked until ${clockLabel(phase.endsAt)}. Minutes you earn now are waiting for you — spending opens in ${untilLabel(opensAt, now)}.`}
+          </p>
+        )}
 
         <div className="mt-5">
           <div className="h-1.5 w-full overflow-hidden rounded-full bg-panel-hi">
@@ -203,36 +220,41 @@ export default function Dashboard({ userId }: { userId: string }) {
         </p>
       )}
 
-      {/* --- spend --------------------------------------------------------- */}
+      {/* --- spend ---------------------------------------------------------
+          Read-only since spec section 3A: the open IS the session start, so
+          this panel explains where and when, and starts nothing. The lengths
+          are shown because knowing what a session costs is what makes the
+          balance mean anything before you are standing at the door. */}
       <div className="mt-9">
-        <h2 className="text-lg font-bold tracking-[-0.02em]">Spend minutes</h2>
+        <h2 className="text-lg font-bold tracking-[-0.02em]">Spending</h2>
 
-        <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 pb-1">
-          {TRACKED_APPS.map((name) => (
-            <button
-              key={name}
-              type="button"
-              data-on={app === name}
-              onClick={() => setApp(name)}
-              className="press chip"
-            >
-              {name}
-            </button>
-          ))}
-        </div>
+        <div className="card mt-3 px-4 py-4">
+          <p className="text-[0.9375rem] leading-snug font-semibold">
+            {phase.kind === 'spend'
+              ? `Open a tracked site. Pick a length there — the window closes at ${clockLabel(phase.endsAt)}.`
+              : `Locked until ${clockLabel(opensAt)}.`}
+          </p>
+          <p className="mt-1.5 text-[0.8125rem] leading-snug text-muted">
+            {phase.kind === 'spend'
+              ? 'The block page is where sessions start now. Choosing at the door, with the balance in front of you, is the same decision with the cost attached.'
+              : 'Earning works at every hour — finish a task now and the minutes are there when the window opens.'}
+          </p>
 
-        <div className="mt-3 grid grid-cols-4 gap-2">
-          {SESSION_LENGTHS.map((minutes) => (
-            <button
-              key={minutes}
-              disabled={busy || balance.minutes_available < minutes}
-              onClick={() => onStart(minutes)}
-              className="press card flex flex-col items-center justify-center gap-0.5 py-4 disabled:opacity-30 active:border-acid active:bg-acid/10"
-            >
-              <span className="numeral text-2xl">{minutes}</span>
-              <span className="text-[0.6875rem] font-semibold tracking-wide text-faint">MIN</span>
-            </button>
-          ))}
+          <div className="mt-3.5 flex gap-2">
+            {SESSION_LENGTHS.map((minutes) => (
+              <span
+                key={minutes}
+                className={`flex flex-1 flex-col items-center justify-center gap-0.5 rounded-2xl border border-line py-3 ${
+                  phase.kind === 'spend' && balance.minutes_available >= minutes
+                    ? 'text-fg'
+                    : 'text-faint opacity-45'
+                }`}
+              >
+                <span className="numeral text-xl">{minutes}</span>
+                <span className="text-[0.625rem] font-semibold tracking-wide text-faint">MIN</span>
+              </span>
+            ))}
+          </div>
         </div>
       </div>
     </section>

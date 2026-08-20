@@ -1,5 +1,7 @@
 import { CONFIG } from './config.js'
 import { signIn, signOut, getSession, isConfigured } from './supabase.js'
+import { phaseAt, phaseSummary, clockLabel, spendOpensAt } from './schedule.js'
+import { blockableSites } from './always-allowed.js'
 
 const el = (id) => document.getElementById(id)
 const errorEl = el('error')
@@ -22,16 +24,28 @@ async function render() {
 
   el('who').textContent = session.email ?? 'signed in'
 
+  // The window comes first here for the same reason it does in the worker: it
+  // is what decides whether any of the per-site rows below can say "open".
+  const phase = phaseAt()
+  el('window').textContent = phaseSummary()
+  el('window-note').textContent =
+    phase.kind === 'spend'
+      ? 'Open a blocked site to spend minutes.'
+      : `Spending reopens at ${clockLabel(spendOpensAt())}.`
+
   const { et_status: status } = await chrome.storage.local.get('et_status')
   const unlocked = status?.unlocked ?? {}
   el('sites').innerHTML = ''
-  for (const site of CONFIG.sites) {
+  for (const site of blockableSites(CONFIG.sites)) {
     const endsAt = unlocked[site.domain]
     const li = document.createElement('li')
     const name = document.createElement('span')
     name.textContent = site.label
     const state = document.createElement('span')
-    if (endsAt) {
+    if (endsAt && phase.kind === 'open') {
+      state.className = 'open'
+      state.textContent = 'open window'
+    } else if (endsAt) {
       state.className = 'open'
       state.textContent = `open · ${minutesLeft(endsAt)}m left`
     } else {

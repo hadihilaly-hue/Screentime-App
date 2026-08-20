@@ -59,8 +59,27 @@ load and shows a failure message rather than an app with no auth gate.
 
 Phase 1 is honour-system **on the phone**: the timer runs, but nothing stops
 you opening Snapchat anyway. On the **laptop** it is not — the Chrome
-extension in `extension/` redirects the tracked sites to a block page unless
-a session for them is running. See `extension/README.md`.
+extension in `extension/` redirects the tracked sites to a block page. See
+`extension/README.md`.
+
+### The day (spec section 3A)
+
+Local device time, everywhere:
+
+| 7–9am | 9am–6pm | 6pm–midnight | midnight–7am |
+| --- | --- | --- | --- |
+| Open | Hard block | Spend window | Hard cutoff |
+
+**Earning works at every hour. Spending only works after 6pm.** Before then the
+dashboard shows the balance in a *spendable at 6:00 PM* state.
+
+Sessions are started at the block page, not in the app: you open a tracked site,
+it is blocked, you pick 5/10/15/20 minutes there, and that tap is the session
+start. The app still shows the running countdown — it just no longer starts one.
+
+**Phone, FaceTime, Messages, Lyft, Waymo and DoorDash are never blocked or
+tracked**, in any window (spec section 3B). Blocking is opt-in per app and per
+site; those six are the permanent exclusion.
 
 ## Status
 
@@ -69,9 +88,17 @@ Built (Weekend 1, spec section 8):
 - Morning gate — type the day's list; routing blocks everything else until it
   is confirmed
 - Task review — edit, tier, add, delete before confirming; cancel after
-- Dashboard — balance, tasks grouped by tier, mark done, spend minutes
+- Dashboard — balance (with its spendable-at-6pm state), tasks grouped by tier,
+  mark done, and a read-only explanation of when and where minutes are spent
 - Active session — full-screen countdown, time's-up state, session logging
 - Midnight reset — client-side, keyed on the local date
+
+Landed after Weekend 1, out of order:
+
+- Chrome extension — real blocking on the laptop
+- The section 3A schedule and the section 3B always-allowed list, in both the
+  app and the extension
+- Sessions start at the block page, with a quote on it
 
 Not built yet (Weekend 2):
 

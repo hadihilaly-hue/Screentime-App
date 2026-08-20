@@ -12,6 +12,7 @@
       .open { color: #15803d; }
       .blocked { color: #b91c1c; }
       .muted { color: #6b7280; font-size: 0.75rem; }
+      .window { font-size: 0.8125rem; font-weight: 600; margin: 0.5rem 0 0.125rem; }
       .error { color: #b91c1c; font-size: 0.875rem; }
     </style>
   </head>
@@ -25,6 +26,8 @@
     </div>
     <div id="signed-in" hidden>
       <p class="muted" id="who"></p>
+      <p class="window" id="window"></p>
+      <p class="muted" id="window-note"></p>
       <ul id="sites"></ul>
       <p class="muted" id="checked"></p>
       <button id="refresh">Re-check now</button>

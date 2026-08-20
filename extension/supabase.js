@@ -108,23 +108,65 @@ async function accessToken() {
   }
 }
 
+/** One PostgREST call as the signed-in user. Returns null when signed out. */
+async function request(path, { method = 'GET', body, prefer } = {}) {
+  if (!isConfigured()) throw new Error('Extension is not configured — see config.js.')
+  const token = await accessToken()
+  if (!token) return null
+
+  const headers = {
+    apikey: CONFIG.supabaseAnonKey,
+    Authorization: `Bearer ${token}`,
+  }
+  if (body !== undefined) headers['Content-Type'] = 'application/json'
+  if (prefer) headers.Prefer = prefer
+
+  const res = await fetch(`${CONFIG.supabaseUrl}/rest/v1/${path}`, {
+    method,
+    headers,
+    body: body === undefined ? undefined : JSON.stringify(body),
+  })
+
+  if (!res.ok) {
+    // PostgREST puts the useful part in a JSON body — an RLS refusal and a
+    // check-constraint violation are both 4xx and mean very different things.
+    let detail = ''
+    try {
+      const payload = await res.json()
+      detail = payload?.message || payload?.hint || ''
+    } catch {
+      detail = ''
+    }
+    throw new Error(detail ? `Supabase returned ${res.status}: ${detail}` : `Supabase returned ${res.status}`)
+  }
+
+  if (res.status === 204) return []
+  return res.json()
+}
+
 /**
  * GET against PostgREST as the signed-in user. Returns null when signed out, so
  * callers can distinguish "no session" from "no rows".
  */
 export async function query(path) {
-  if (!isConfigured()) throw new Error('Extension is not configured — see config.js.')
-  const token = await accessToken()
-  if (!token) return null
+  return request(path)
+}
 
-  const res = await fetch(`${CONFIG.supabaseUrl}/rest/v1/${path}`, {
-    headers: {
-      apikey: CONFIG.supabaseAnonKey,
-      Authorization: `Bearer ${token}`,
-    },
-  })
-  if (!res.ok) throw new Error(`Supabase returned ${res.status}`)
-  return res.json()
+/**
+ * INSERT, returning the created rows. Null when signed out.
+ *
+ * Writes are new in v0.4.0: the block page is now where sessions start (spec
+ * section 3A), so the extension is no longer read-only. It still touches only
+ * the two tables the web app already writes, under the same RLS policies —
+ * there is no privilege here the app did not already have.
+ */
+export async function insert(path, row) {
+  return request(path, { method: 'POST', body: row, prefer: 'return=representation' })
+}
+
+/** UPDATE, returning the affected rows so a zero-row RLS filter is visible. */
+export async function patch(path, changes) {
+  return request(path, { method: 'PATCH', body: changes, prefer: 'return=representation' })
 }
 
 /** Local wall-clock date as YYYY-MM-DD, matching the web app's todayISO(). */
