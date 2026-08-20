@@ -41,17 +41,18 @@ the code it loaded until you press **Reload** on its card in
 `chrome://extensions`.
 
 The block page shows the version it is running at the bottom
-(`EarnedTime Blocker v0.2.0`). If that line is missing, or shows an older
-number than `manifest.json`, the browser is on stale code — hit Reload and open
-a blocked site again.
+(`EarnedTime Blocker v0.3.0`). If that line is missing, or shows an older
+number than the `version` in `manifest.json`, the browser is on stale code —
+hit Reload and open a blocked site again.
 
-From v0.2.0 the block page should visibly have all of:
+From v0.3.0 the block page should visibly have all of:
 
 - a **I started a session — let me through** button
 - the URL you were heading to, printed under the balance
 - a diagnostics line naming whether you are signed in, how many unfinished
   session rows the query returned, how many are still running, whether any
   matches this site, and when the worker last checked
+- a separate error line above it, empty unless something actually failed
 - the version line
 
 ## Reading the diagnostics line

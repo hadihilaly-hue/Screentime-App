@@ -45,10 +45,27 @@ async function tokenRequest(grantType, body) {
     },
     body: JSON.stringify(body),
   })
-  const payload = await res.json()
-  if (!res.ok) {
-    throw new Error(payload.error_description || payload.msg || payload.error || 'Sign in failed.')
+
+  let payload = null
+  try {
+    payload = await res.json()
+  } catch {
+    // A captive portal or proxy answering with HTML. Not an auth decision.
+    payload = null
   }
+
+  if (!res.ok) {
+    const error = new Error(
+      payload?.error_description || payload?.msg || payload?.error || `Auth returned ${res.status}.`,
+    )
+    // Only a 4xx is the credential itself being refused. A 5xx, or anything
+    // that did not parse as JSON, is the server or the network having a bad
+    // moment — callers must be able to tell those apart before signing out.
+    error.authRejected = res.status >= 400 && res.status < 500
+    throw error
+  }
+
+  if (!payload?.access_token) throw new Error('Auth returned no access token.')
   return shape(payload)
 }
 
@@ -76,10 +93,18 @@ async function accessToken() {
     const refreshed = await tokenRequest('refresh_token', { refresh_token: session.refresh_token })
     await writeStored(refreshed)
     return refreshed.access_token
-  } catch {
-    // Refresh token rejected — treat as signed out rather than retrying forever.
-    await signOut()
-    return null
+  } catch (e) {
+    if (e?.authRejected) {
+      // The refresh token really was refused. Signing out is correct.
+      await signOut()
+      return null
+    }
+    // Offline, 5xx, or a captive portal. Signing out here was how a brief
+    // outage landing near token expiry produced a hard mid-session block that
+    // the worker's grace window never saw — and it destroyed the stored
+    // session, so it could not heal on the next poll either. Rethrow instead:
+    // that is a failed check, which grace absorbs, and the session survives.
+    throw e
   }
 }
 

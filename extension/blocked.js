@@ -252,7 +252,11 @@ function schedule() {
 }
 
 async function tick() {
-  timer = null
+  // clearTimeout, not just `timer = null`. tick() is also called directly by
+  // the visibility handler, and merely dropping the handle there left the
+  // pending timeout to fire later and start a second chain — every
+  // hidden->visible toggle added one, multiplying the poll rate.
+  stopPolling()
   if (released || inFlight) {
     schedule()
     return
@@ -269,7 +273,8 @@ async function tick() {
 document.addEventListener('visibilitychange', () => {
   if (released) return
   // Coming back to the tab is worth an immediate check; leaving it just slows
-  // the next one down.
+  // the next one down. Either way tick()/schedule() cancel what was armed, so
+  // toggling cannot leave more than one chain running.
   if (!document.hidden) void tick()
   else schedule()
 })
