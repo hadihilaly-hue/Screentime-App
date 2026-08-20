@@ -11,7 +11,18 @@
     <title>EarnedTime</title>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <!-- Replaced by React on mount. Stays visible if the bundle throws first,
+           which is what a production build with missing env vars does. -->
+      <div style="font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem">
+        <h1 style="font-size: 1.25rem">EarnedTime failed to start</h1>
+        <p>
+          If this persists, the build is missing VITE_SUPABASE_URL or
+          VITE_SUPABASE_ANON_KEY. Set both in your host's environment variables and
+          redeploy. The browser console has the exact error.
+        </p>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

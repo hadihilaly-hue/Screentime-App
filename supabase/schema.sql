@@ -135,8 +135,10 @@ create policy sessions_update on public.sessions
   for update using ((select auth.uid()) = user_id)
                 with check ((select auth.uid()) = user_id);
 
--- daily_state: read / create / update your own. No delete — you don't get to
--- un-confirm a day after the fact.
+-- daily_state: read / create / update your own. No delete, and the UPDATE
+-- policy only matches rows that are still unconfirmed — so confirming works
+-- but un-confirming does not. Without that, a confirmed day could be flipped
+-- back to false, letting the tasks_delete policy match again.
 drop policy if exists daily_state_select on public.daily_state;
 create policy daily_state_select on public.daily_state
   for select using ((select auth.uid()) = user_id);
@@ -147,5 +149,5 @@ create policy daily_state_insert on public.daily_state
 
 drop policy if exists daily_state_update on public.daily_state;
 create policy daily_state_update on public.daily_state
-  for update using ((select auth.uid()) = user_id)
+  for update using ((select auth.uid()) = user_id and not list_confirmed)
                  with check ((select auth.uid()) = user_id);

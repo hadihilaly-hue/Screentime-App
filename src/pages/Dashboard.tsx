@@ -9,7 +9,14 @@ import {
   type Balance,
   type Task,
 } from '../lib/db'
-import { DAILY_CAP_MINUTES, SESSION_LENGTHS, TIER_MINUTES, TRACKED_APPS } from '../lib/constants'
+import {
+  DAILY_CAP_MINUTES,
+  SESSION_LENGTHS,
+  TIER_LABELS,
+  TIER_MINUTES,
+  TRACKED_APPS,
+  type Tier,
+} from '../lib/constants'
 
 const STATUS_LABEL: Record<Task['status'], string> = {
   todo: 'todo',
@@ -83,24 +90,44 @@ export default function Dashboard({ userId }: { userId: string }) {
       </p>
 
       <h2 className="mt-6 text-xl font-bold">Today's tasks</h2>
-      <ul className="mt-2 flex flex-col gap-2">
-        {tasks.map((task) => (
-          <li key={task.id} className="flex flex-wrap items-center gap-2 border p-2">
-            <span className={task.status === 'verified' || task.status === 'cancelled' ? 'line-through' : ''}>
-              {task.title}
-            </span>
-            <span className="text-sm text-gray-500">
-              T{task.tier} · {TIER_MINUTES[task.tier]}m · {STATUS_LABEL[task.status]}
-            </span>
-            {task.created_after_confirmation && <span className="text-sm text-amber-700">added late</span>}
-            {task.status === 'todo' && (
-              <button disabled={busy} onClick={() => onComplete(task)} className="ml-auto border px-2 py-1 text-sm">
-                Mark done
-              </button>
-            )}
-          </li>
-        ))}
-      </ul>
+      {/* Grouped by tier, per spec section 2 step 3. */}
+      {([1, 2, 3] as Tier[]).map((tier) => {
+        const inTier = tasks.filter((t) => t.tier === tier)
+        if (inTier.length === 0) return null
+        return (
+          <div key={tier} className="mt-3">
+            <h3 className="text-sm font-bold text-gray-500">{TIER_LABELS[tier]}</h3>
+            <ul className="mt-1 flex flex-col gap-2">
+              {inTier.map((task) => (
+                <li key={task.id} className="flex flex-wrap items-center gap-2 border p-2">
+                  <span
+                    className={
+                      task.status === 'verified' || task.status === 'cancelled' ? 'line-through' : ''
+                    }
+                  >
+                    {task.title}
+                  </span>
+                  <span className="text-sm text-gray-500">
+                    {TIER_MINUTES[task.tier]}m · {STATUS_LABEL[task.status]}
+                  </span>
+                  {task.created_after_confirmation && (
+                    <span className="text-sm text-amber-700">added late</span>
+                  )}
+                  {task.status === 'todo' && (
+                    <button
+                      disabled={busy}
+                      onClick={() => onComplete(task)}
+                      className="ml-auto border px-2 py-1 text-sm"
+                    >
+                      Mark done
+                    </button>
+                  )}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )
+      })}
       <button onClick={() => navigate('/review')} className="mt-2 text-sm underline">
         Edit list
       </button>

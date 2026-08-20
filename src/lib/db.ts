@@ -69,9 +69,12 @@ export async function confirmList(userId: string): Promise<DailyState> {
       { onConflict: 'user_id,date' },
     )
     .select()
-    .single()
+    .maybeSingle()
   if (error) throw error
-  return data as DailyState
+  // The RLS update policy stops matching once list_confirmed is true, so
+  // re-confirming an already-confirmed day writes nothing. That is not an
+  // error — the day is simply already locked.
+  return (data as DailyState) ?? (await getDailyState(userId))
 }
 
 // --- tasks -----------------------------------------------------------------
@@ -100,6 +103,10 @@ export async function addTasks(
     date: todayISO(),
     title,
     tier: 2 as Tier, // you re-tier by hand on Task Review
+    // Weekend 1 has no Claude, so this records the tier the task was *created*
+    // with rather than a suggestion. Either way it is the baseline the weekly
+    // review diffs against to show which tasks you re-tiered.
+    claude_suggested_tier: 2 as Tier,
     status: 'todo' as TaskStatus,
     created_after_confirmation: afterConfirmation,
   }))
@@ -113,11 +120,19 @@ export async function updateTask(id: string, patch: Partial<Task>): Promise<void
   if (error) throw error
 }
 
-/** Only succeeds while the day's list is unconfirmed — RLS enforces it too. */
+/**
+ * Only possible while the day's list is unconfirmed.
+ *
+ * PostgREST reports success with zero rows affected when RLS filters a DELETE,
+ * so the returned rows are checked rather than the error.
+ */
 export async function deleteTask(id: string): Promise<void> {
   const db = requireClient()
-  const { error } = await db.from('tasks').delete().eq('id', id)
+  const { data, error } = await db.from('tasks').delete().eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) {
+    throw new Error('That task can no longer be deleted — cancel it instead.')
+  }
 }
 
 /** Post-confirmation exit route: the task stays on the record as cancelled. */

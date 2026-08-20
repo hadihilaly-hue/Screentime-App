@@ -84,18 +84,28 @@ export default function TaskReview({
               className="w-full border p-1"
             />
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
-              {([1, 2, 3] as Tier[]).map((tier) => (
-                <button
-                  key={tier}
-                  disabled={busy}
-                  onClick={() => run(() => updateTask(task.id, { tier }))}
-                  className={`border px-2 py-1 ${task.tier === tier ? 'bg-gray-900 text-white' : ''}`}
-                >
-                  T{tier} · {TIER_MINUTES[tier]}m
-                </button>
-              ))}
               {confirmed ? (
-                task.status !== 'cancelled' && (
+                // Re-tiering after confirmation would let a Tier 3 task be bumped to
+                // Tier 1 for four times the minutes, so the price is fixed at lock-in.
+                <span className="border px-2 py-1">
+                  T{task.tier} · {TIER_MINUTES[task.tier]}m
+                </span>
+              ) : (
+                ([1, 2, 3] as Tier[]).map((tier) => (
+                  <button
+                    key={tier}
+                    disabled={busy}
+                    onClick={() => run(() => updateTask(task.id, { tier }))}
+                    className={`border px-2 py-1 ${task.tier === tier ? 'bg-gray-900 text-white' : ''}`}
+                  >
+                    T{tier} · {TIER_MINUTES[tier]}m
+                  </button>
+                ))
+              )}
+              {confirmed ? (
+                // Only open work can be cancelled. Cancelling a verified task would
+                // erase the record while its minutes stayed banked.
+                task.status === 'todo' && (
                   <button disabled={busy} onClick={() => run(() => cancelTask(task.id))} className="underline">
                     cancel
                   </button>
@@ -106,7 +116,7 @@ export default function TaskReview({
                 </button>
               )}
               {task.created_after_confirmation && <span className="text-amber-700">added late</span>}
-              {task.status === 'cancelled' && <span className="text-gray-500">cancelled</span>}
+              {task.status !== 'todo' && <span className="text-gray-500">{task.status}</span>}
             </div>
           </li>
         ))}
