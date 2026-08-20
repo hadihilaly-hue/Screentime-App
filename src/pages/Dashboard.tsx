@@ -17,6 +17,7 @@ import {
   TRACKED_APPS,
   type Tier,
 } from '../lib/constants'
+import { IconCheck, Spinner } from '../ui'
 
 const STATUS_LABEL: Record<Task['status'], string> = {
   todo: 'todo',
@@ -86,90 +87,154 @@ export default function Dashboard({ userId }: { userId: string }) {
     }
   }
 
-  if (!balance) return <p>Loading...</p>
+  if (!balance) return <Spinner />
 
   const open = tasks.filter((t) => t.status === 'todo')
+  const capPct = Math.min(100, (balance.minutes_earned_total / DAILY_CAP_MINUTES) * 100)
+  const spendable = balance.minutes_available > 0
 
   return (
-    <section>
-      <p className="text-6xl font-bold">{balance.minutes_available}</p>
-      <p className="text-gray-600">minutes available</p>
-      <p className="mt-1 text-sm text-gray-500">
-        Earned today: {balance.minutes_earned_total} / {DAILY_CAP_MINUTES}
-      </p>
+    <section className="fade-up">
+      {/* --- balance ------------------------------------------------------
+          The one number the whole app exists to move. */}
+      <div className="pt-2 pb-7">
+        <p className="eyebrow">Balance</p>
+        <div className="mt-2 flex items-end gap-3">
+          <span
+            className={`numeral text-[5.5rem] ${spendable ? 'text-acid' : 'text-fg'}`}
+          >
+            {balance.minutes_available}
+          </span>
+          <span className="pb-3 text-[0.9375rem] leading-tight font-semibold text-muted">
+            minutes
+            <br />
+            available
+          </span>
+        </div>
 
-      <h2 className="mt-6 text-xl font-bold">Today's tasks</h2>
+        <div className="mt-5">
+          <div className="h-1.5 w-full overflow-hidden rounded-full bg-panel-hi">
+            <div
+              className="h-full rounded-full bg-acid transition-[width] duration-500 ease-out"
+              style={{ width: `${capPct}%` }}
+            />
+          </div>
+          <p className="mt-2 text-[0.8125rem] font-medium text-faint">
+            Earned today {balance.minutes_earned_total} / {DAILY_CAP_MINUTES}
+          </p>
+        </div>
+      </div>
+
+      {notice && <p className="banner banner-warn mb-4">{notice}</p>}
+      {error && <p className="banner banner-error mb-4">{error}</p>}
+
+      {/* --- tasks --------------------------------------------------------- */}
+      <div className="flex items-baseline justify-between">
+        <h2 className="text-lg font-bold tracking-[-0.02em]">Today's tasks</h2>
+        <button onClick={() => navigate('/review')} className="press text-sm font-semibold text-muted">
+          Edit list
+        </button>
+      </div>
+
       {/* Grouped by tier, per spec section 2 step 3. */}
       {([1, 2, 3] as Tier[]).map((tier) => {
         const inTier = tasks.filter((t) => t.tier === tier)
         if (inTier.length === 0) return null
         return (
-          <div key={tier} className="mt-3">
-            <h3 className="text-sm font-bold text-gray-500">{TIER_LABELS[tier]}</h3>
-            <ul className="mt-1 flex flex-col gap-2">
-              {inTier.map((task) => (
-                <li key={task.id} className="flex flex-wrap items-center gap-2 border p-2">
-                  <span
-                    className={
-                      task.status === 'verified' || task.status === 'cancelled' ? 'line-through' : ''
-                    }
+          <div key={tier} className="mt-5">
+            <h3 className="eyebrow">{TIER_LABELS[tier]}</h3>
+            <ul className="mt-2.5 flex flex-col gap-2">
+              {inTier.map((task) => {
+                const done = task.status === 'verified' || task.status === 'cancelled'
+                return (
+                  <li
+                    key={task.id}
+                    className={`card flex items-center gap-3 px-4 py-3.5 ${done ? 'opacity-55' : ''}`}
                   >
-                    {task.title}
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {TIER_MINUTES[task.tier]}m · {STATUS_LABEL[task.status]}
-                  </span>
-                  {task.created_after_confirmation && (
-                    <span className="text-sm text-amber-700">added late</span>
-                  )}
-                  {task.edited_after_confirmation && (
-                    <span className="text-sm text-amber-700">edited late</span>
-                  )}
-                  {task.status === 'todo' && (
-                    <button
-                      disabled={busy}
-                      onClick={() => onComplete(task)}
-                      className="ml-auto border px-2 py-1 text-sm"
-                    >
-                      Mark done
-                    </button>
-                  )}
-                </li>
-              ))}
+                    <div className="min-w-0 flex-1">
+                      <p
+                        className={`text-[0.9375rem] font-semibold leading-snug ${
+                          done ? 'line-through decoration-faint' : ''
+                        }`}
+                      >
+                        {task.title}
+                      </p>
+                      <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
+                        <span className="text-[0.75rem] font-bold text-acid">
+                          {TIER_MINUTES[task.tier]}m
+                        </span>
+                        <span className="text-[0.75rem] text-faint">
+                          · {STATUS_LABEL[task.status]}
+                        </span>
+                        {task.created_after_confirmation && (
+                          <span className="tag tag-warn">added late</span>
+                        )}
+                        {task.edited_after_confirmation && (
+                          <span className="tag tag-warn">edited late</span>
+                        )}
+                      </div>
+                    </div>
+                    {task.status === 'todo' && (
+                      <button
+                        aria-label={`Mark "${task.title}" done`}
+                        disabled={busy}
+                        onClick={() => onComplete(task)}
+                        className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line text-faint disabled:opacity-40 active:border-acid active:bg-acid active:text-ink"
+                      >
+                        <IconCheck />
+                      </button>
+                    )}
+                    {task.status === 'verified' && (
+                      <span className="flex h-11 w-11 shrink-0 items-center justify-center rounded-full bg-acid/15 text-acid">
+                        <IconCheck />
+                      </span>
+                    )}
+                  </li>
+                )
+              })}
             </ul>
           </div>
         )
       })}
-      <button onClick={() => navigate('/review')} className="mt-2 text-sm underline">
-        Edit list
-      </button>
+
       {open.length === 0 && tasks.length > 0 && (
-        <p className="mt-2 text-sm text-gray-500">Nothing open. Full-completion bonus lands in Weekend 2.</p>
+        <p className="mt-4 text-[0.8125rem] text-faint">
+          Nothing open. Full-completion bonus lands in Weekend 2.
+        </p>
       )}
 
-      <h2 className="mt-6 text-xl font-bold">Spend minutes</h2>
-      <select value={app} onChange={(e) => setApp(e.target.value)} className="mt-2 border p-2">
-        {TRACKED_APPS.map((name) => (
-          <option key={name} value={name}>
-            {name}
-          </option>
-        ))}
-      </select>
-      <div className="mt-2 flex flex-wrap gap-2">
-        {SESSION_LENGTHS.map((minutes) => (
-          <button
-            key={minutes}
-            disabled={busy || balance.minutes_available < minutes}
-            onClick={() => onStart(minutes)}
-            className="border px-3 py-2 disabled:opacity-40"
-          >
-            {minutes} min
-          </button>
-        ))}
-      </div>
+      {/* --- spend --------------------------------------------------------- */}
+      <div className="mt-9">
+        <h2 className="text-lg font-bold tracking-[-0.02em]">Spend minutes</h2>
 
-      {notice && <p className="mt-4 border border-amber-500 bg-amber-50 p-2 text-amber-800">{notice}</p>}
-      {error && <p className="mt-4 text-red-600">{error}</p>}
+        <div className="-mx-5 mt-3 flex gap-2 overflow-x-auto px-5 pb-1">
+          {TRACKED_APPS.map((name) => (
+            <button
+              key={name}
+              type="button"
+              data-on={app === name}
+              onClick={() => setApp(name)}
+              className="press chip"
+            >
+              {name}
+            </button>
+          ))}
+        </div>
+
+        <div className="mt-3 grid grid-cols-4 gap-2">
+          {SESSION_LENGTHS.map((minutes) => (
+            <button
+              key={minutes}
+              disabled={busy || balance.minutes_available < minutes}
+              onClick={() => onStart(minutes)}
+              className="press card flex flex-col items-center justify-center gap-0.5 py-4 disabled:opacity-30 active:border-acid active:bg-acid/10"
+            >
+              <span className="numeral text-2xl">{minutes}</span>
+              <span className="text-[0.6875rem] font-semibold tracking-wide text-faint">MIN</span>
+            </button>
+          ))}
+        </div>
+      </div>
     </section>
   )
 }

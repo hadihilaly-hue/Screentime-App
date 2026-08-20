@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { supabase, isSupabaseConfigured } from '../lib/supabase'
+import { IconBolt } from '../ui'
 
 export default function Login() {
   const [email, setEmail] = useState('')
@@ -18,38 +19,51 @@ export default function Login() {
   }
 
   return (
-    <section>
-      <h1 className="text-2xl font-bold">Sign in</h1>
+    <section className="fade-up flex min-h-[88dvh] flex-col justify-center">
+      <div className="mb-10">
+        <span className="flex h-14 w-14 items-center justify-center rounded-2xl bg-acid text-ink">
+          <IconBolt className="h-7 w-7" />
+        </span>
+        <h1 className="mt-6 text-[2.25rem] leading-none font-extrabold tracking-[-0.04em]">
+          EarnedTime
+        </h1>
+        <p className="mt-3 text-[0.9375rem] text-muted">Do the work. Unlock the screen.</p>
+      </div>
+
       {!isSupabaseConfigured && (
-        <p className="mt-2 text-red-600">Supabase is not configured. Fill in .env first.</p>
+        <p className="banner banner-error mb-4">Supabase is not configured. Fill in .env first.</p>
       )}
-      <form onSubmit={onSubmit} className="mt-4 flex max-w-sm flex-col gap-2">
+
+      <form onSubmit={onSubmit} className="flex flex-col gap-3">
         <input
           type="email"
           required
+          autoComplete="email"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
-          placeholder="email"
-          className="border p-2"
+          placeholder="Email"
+          className="field"
         />
         <input
           type="password"
           required
+          autoComplete="current-password"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
-          placeholder="password"
-          className="border p-2"
+          placeholder="Password"
+          className="field"
         />
         <button
           type="submit"
           disabled={busy || !isSupabaseConfigured}
-          className="border bg-gray-900 p-2 text-white disabled:opacity-40"
+          className="press btn btn-primary mt-2 w-full"
         >
-          {busy ? 'Signing in...' : 'Sign in'}
+          {busy ? 'Signing in…' : 'Sign in'}
         </button>
-        {error && <p className="text-red-600">{error}</p>}
+        {error && <p className="banner banner-error">{error}</p>}
       </form>
-      <p className="mt-4 text-sm text-gray-400">
+
+      <p className="mt-8 text-[0.8125rem] leading-snug text-faint">
         No signup flow by design — the one account is created in the Supabase dashboard.
       </p>
     </section>

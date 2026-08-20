@@ -1,9 +1,13 @@
+import { ComingSoon, IconShield } from '../ui'
+
 export default function VerificationResult() {
   return (
-    <section>
-      <h1 className="text-2xl font-bold">Verification Result</h1>
-      <p className="mt-2 text-gray-600">Verified, Rejected, or one Follow-up question.</p>
-      <p className="mt-4 text-sm text-gray-400">Placeholder — spec section 4.5</p>
-    </section>
+    <ComingSoon
+      eyebrow="Step 5"
+      title="Verification result"
+      blurb="Verified, Rejected, or one follow-up question."
+      section="spec 4.5"
+      icon={<IconShield className="h-7 w-7" />}
+    />
   )
 }

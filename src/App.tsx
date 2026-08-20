@@ -4,6 +4,7 @@ import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
 import { endStaleSessions, getDailyState, type DailyState } from './lib/db'
 import { useToday } from './lib/useToday'
+import { Centered, Screen, Spinner } from './ui'
 
 import MorningGate from './pages/MorningGate'
 import TaskReview from './pages/TaskReview'
@@ -54,8 +55,13 @@ function SignedIn({ userId }: { userId: string }) {
 
   useEffect(reload, [reload])
 
-  if (error) return <p className="p-4 text-red-600">{error}</p>
-  if (!day) return <p className="p-4">Loading...</p>
+  if (error)
+    return (
+      <Centered>
+        <p className="banner banner-error">{error}</p>
+      </Centered>
+    )
+  if (!day) return <Spinner label="Loading today" />
 
   const confirmed = day.list_confirmed
   const gated = (element: ReactElement) =>
@@ -80,14 +86,30 @@ function SignedIn({ userId }: { userId: string }) {
 
 function NotConfigured() {
   return (
-    <div className="mx-auto max-w-2xl p-4">
-      <h1 className="text-2xl font-bold">Not connected</h1>
-      <p className="mt-2 text-gray-700">
-        Copy <code>.env.example</code> to <code>.env</code> and fill in{' '}
-        <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>, then restart the dev
-        server. Nothing works without a database.
-      </p>
-    </div>
+    <Shell>
+      <Screen
+        eyebrow="Setup"
+        title="Not connected"
+        subtitle={
+          <>
+            Copy <code className="text-fg">.env.example</code> to{' '}
+            <code className="text-fg">.env</code> and fill in{' '}
+            <code className="text-fg">VITE_SUPABASE_URL</code> and{' '}
+            <code className="text-fg">VITE_SUPABASE_ANON_KEY</code>, then restart the dev server.
+            Nothing works without a database.
+          </>
+        }
+      >
+        <></>
+      </Screen>
+    </Shell>
+  )
+}
+
+/** The phone-width column everything except the timer screen sits in. */
+function Shell({ children }: { children: ReactElement }) {
+  return (
+    <div className="mx-auto w-full max-w-md px-5 safe-top safe-bottom">{children}</div>
   )
 }
 
@@ -98,16 +120,26 @@ export default function App() {
   // In production a missing config throws at import time in lib/supabase, so
   // this branch is dev-only by construction.
   if (!isSupabaseConfigured) return <NotConfigured />
-  if (loading) return <p className="p-4">Loading...</p>
-  if (!session) return <Login />
+  if (loading)
+    return (
+      <Shell>
+        <Spinner />
+      </Shell>
+    )
+  if (!session)
+    return (
+      <Shell>
+        <Login />
+      </Shell>
+    )
 
   return (
     <BrowserRouter>
-      <div className="mx-auto max-w-2xl p-4">
+      <Shell>
         {/* Keyed on the date: at midnight this remounts, today's state is
             refetched, and the morning gate closes again for the new day. */}
         <SignedIn key={today} userId={session.user.id} />
-      </div>
+      </Shell>
     </BrowserRouter>
   )
 }
