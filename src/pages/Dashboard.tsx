@@ -113,6 +113,9 @@ export default function Dashboard({ userId }: { userId: string }) {
                   {task.created_after_confirmation && (
                     <span className="text-sm text-amber-700">added late</span>
                   )}
+                  {task.edited_after_confirmation && (
+                    <span className="text-sm text-amber-700">edited late</span>
+                  )}
                   {task.status === 'todo' && (
                     <button
                       disabled={busy}

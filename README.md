@@ -6,13 +6,14 @@ built. Full spec in [`phase-1-spec.md`](phase-1-spec.md).
 
 ## Setup
 
-1. **Create a Supabase project**, then run the SQL in order in the SQL editor:
-   - `supabase/schema.sql` — the four tables, indexes and RLS policies
-   - `supabase/migration-02-hardening.sql` — the anti-cheat guards
+1. **Create a Supabase project**, then run `supabase/schema.sql` in the SQL
+   editor. That is the whole schema — four tables, indexes, RLS policies and
+   every guard.
 
-   `supabase/migration-01-proof-hint-and-delete-guard.sql` is only for a
-   database created before those changes were folded into `schema.sql`. On a
-   fresh project, skip it.
+   The `supabase/migration-*.sql` files exist only for a database created
+   before a given change. Each one is already folded into `schema.sql`, so on
+   a fresh project you skip all of them; on an existing one, run the ones newer
+   than your database, in numeric order. All are idempotent.
 
 2. **Create your user** under Authentication → Users → Add user (email +
    password, confirmed). There is no signup flow; this app has one account.

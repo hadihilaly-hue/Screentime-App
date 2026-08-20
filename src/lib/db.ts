@@ -16,6 +16,7 @@ export interface Task {
   proof_urls: string[]
   verification_notes: string | null
   created_after_confirmation: boolean
+  edited_after_confirmation: boolean
   verified_at: string | null
   created_at: string
 }
@@ -70,10 +71,18 @@ export async function confirmList(userId: string): Promise<DailyState> {
     )
     .select()
     .maybeSingle()
-  if (error) throw error
-  // The RLS update policy stops matching once list_confirmed is true, so
-  // re-confirming an already-confirmed day writes nothing. That is not an
-  // error — the day is simply already locked.
+
+  // Verified against Postgres 16: because the update policy stops matching once
+  // list_confirmed is true, an upsert onto an already-confirmed day raises
+  // "new row violates row-level security policy (USING expression)" rather than
+  // writing zero rows — ON CONFLICT DO UPDATE errors instead of filtering. A
+  // second tab confirming the same day hits exactly that, and it is not a
+  // failure: the day is already locked.
+  if (error) {
+    const current = await getDailyState(userId)
+    if (current.list_confirmed) return current
+    throw error
+  }
   return (data as DailyState) ?? (await getDailyState(userId))
 }
 
@@ -103,10 +112,10 @@ export async function addTasks(
     date: todayISO(),
     title,
     tier: 2 as Tier, // you re-tier by hand on Task Review
-    // Weekend 1 has no Claude, so this records the tier the task was *created*
-    // with rather than a suggestion. Either way it is the baseline the weekly
-    // review diffs against to show which tasks you re-tiered.
-    claude_suggested_tier: 2 as Tier,
+    // claude_suggested_tier is deliberately left null. Weekend 1 has no Claude,
+    // so writing a constant here would only pollute the "tier overrides vs
+    // Claude" metric the weekly review reads in Weekend 2. Post-confirmation
+    // re-tiering is prevented outright rather than logged.
     status: 'todo' as TaskStatus,
     created_after_confirmation: afterConfirmation,
   }))
@@ -114,9 +123,15 @@ export async function addTasks(
   if (error) throw error
 }
 
-export async function updateTask(id: string, patch: Partial<Task>): Promise<void> {
+export async function updateTask(
+  id: string,
+  patch: Partial<Task>,
+  afterConfirmation = false,
+): Promise<void> {
   const db = requireClient()
-  const { error } = await db.from('tasks').update(patch).eq('id', id)
+  // Editing a title after the list is locked is allowed but flagged (spec 4.2).
+  const full = afterConfirmation ? { ...patch, edited_after_confirmation: true } : patch
+  const { error } = await db.from('tasks').update(full).eq('id', id)
   if (error) throw error
 }
 
@@ -211,17 +226,37 @@ export async function completeTask(userId: string, task: Task): Promise<number> 
 
 export async function getActiveSession(userId: string): Promise<AppSession | null> {
   const db = requireClient()
+  // Deliberately not filtered by date: a session running across midnight is
+  // dated yesterday, and filtering it out would strand it with ended_at null
+  // forever, invisible to every code path.
   const { data, error } = await db
     .from('sessions')
     .select('*')
     .eq('user_id', userId)
-    .eq('date', todayISO())
     .is('ended_at', null)
     .order('started_at', { ascending: false })
     .limit(1)
     .maybeSingle()
   if (error) throw error
   return (data as AppSession) ?? null
+}
+
+/**
+ * Close out sessions left open on an earlier day.
+ *
+ * Minutes expire at midnight (spec section 3), so a session still running at
+ * the rollover is over. Stamping ended_at logs it instead of leaving a row that
+ * reads as permanently in progress — spec section 7 wants everything logged.
+ */
+export async function endStaleSessions(userId: string): Promise<void> {
+  const db = requireClient()
+  const { error } = await db
+    .from('sessions')
+    .update({ ended_at: new Date().toISOString() })
+    .eq('user_id', userId)
+    .is('ended_at', null)
+    .lt('date', todayISO())
+  if (error) throw error
 }
 
 /** Minutes are spent up front, so a reload mid-session cannot buy them twice. */

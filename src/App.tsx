@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
-import { getDailyState, type DailyState } from './lib/db'
+import { endStaleSessions, getDailyState, type DailyState } from './lib/db'
 import { useToday } from './lib/useToday'
 
 import MorningGate from './pages/MorningGate'
@@ -44,7 +44,10 @@ function SignedIn({ userId }: { userId: string }) {
   const [error, setError] = useState<string | null>(null)
 
   const reload = useCallback(() => {
-    getDailyState(userId)
+    // A session left running across midnight is closed out first, so it is
+    // logged rather than stranded with ended_at null (spec section 7).
+    endStaleSessions(userId)
+      .then(() => getDailyState(userId))
       .then(setDay)
       .catch((e: Error) => setError(e.message))
   }, [userId])

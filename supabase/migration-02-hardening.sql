@@ -18,10 +18,13 @@ create policy daily_state_update on public.daily_state
 -- 2. Tasks can only be inserted dated around today, closing the route of
 --    backdating a task into a fresh daily cap.
 --
---    NOTE 1: this cannot be a CHECK constraint. Postgres requires functions in
---    a CHECK to be IMMUTABLE, and current_date is only STABLE, so
---    "check (date = current_date)" is rejected outright. An RLS policy may use
---    STABLE functions, so the guard goes there instead.
+--    NOTE 1: this is an RLS policy rather than a CHECK constraint on purpose.
+--    A CHECK would work — Postgres does accept current_date in one — but it is
+--    the wrong tool here for two reasons. A CHECK also fires on UPDATE, so it
+--    would reject any edit to a task the moment the date rolls over, including
+--    marking yesterday's task done at 00:01. And a date-dependent CHECK is a
+--    restore hazard: COPY re-validates it, so a dump reloaded on a later day
+--    fails on every row. RLS applies only to the commands its policy names.
 --
 --    NOTE 2: the window is +/- 1 day, not equality. The client sends the user's
 --    LOCAL date while current_date here is the database's (UTC), and those

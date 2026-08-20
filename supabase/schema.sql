@@ -22,6 +22,7 @@ create table if not exists public.tasks (
   proof_urls                text[]      not null default '{}',
   verification_notes        text,
   created_after_confirmation boolean    not null default false,
+  edited_after_confirmation  boolean    not null default false,
   verified_at               timestamptz,
   created_at                timestamptz not null default now()
 );
@@ -87,9 +88,10 @@ create policy tasks_select on public.tasks
   for select using ((select auth.uid()) = user_id);
 
 -- Insert-only date guard: a task cannot be backdated into a fresh daily cap.
--- Not a CHECK constraint (current_date is STABLE, CHECK requires IMMUTABLE),
--- and a +/- 1 day window rather than equality because the client sends local
--- dates while current_date is the database's UTC date.
+-- An RLS policy rather than a CHECK, because a CHECK would also fire on UPDATE
+-- (breaking edits once the date rolls over) and would make dumps unrestorable
+-- on a later day. The +/- 1 day window rather than equality is because the
+-- client sends local dates while current_date is the database's UTC date.
 drop policy if exists tasks_insert on public.tasks;
 create policy tasks_insert on public.tasks
   for insert with check (

@@ -79,7 +79,9 @@ export default function TaskReview({
               defaultValue={task.title}
               onBlur={(e) => {
                 const title = e.target.value.trim()
-                if (title && title !== task.title) run(() => updateTask(task.id, { title }))
+                if (title && title !== task.title) {
+                  run(() => updateTask(task.id, { title }, confirmed))
+                }
               }}
               className="w-full border p-1"
             />
@@ -116,6 +118,7 @@ export default function TaskReview({
                 </button>
               )}
               {task.created_after_confirmation && <span className="text-amber-700">added late</span>}
+              {task.edited_after_confirmation && <span className="text-amber-700">edited late</span>}
               {task.status !== 'todo' && <span className="text-gray-500">{task.status}</span>}
             </div>
           </li>

@@ -1,9 +1,10 @@
 /**
  * Today in the user's local timezone as YYYY-MM-DD.
  *
- * Every table is keyed by (user_id, date), so "today" is the whole of the
- * midnight reset for now: yesterday's tasks and balance simply stop being
- * queried. A scheduled function to archive them is Weekend 1 step 4.
+ * Every table is keyed by (user_id, date), so this is the whole of the midnight
+ * reset: when the date flips, yesterday's tasks and balance simply stop being
+ * queried. Nothing is archived or deleted. useToday() watches for the flip in
+ * an open tab.
  */
 export function todayISO(): string {
   const d = new Date()
