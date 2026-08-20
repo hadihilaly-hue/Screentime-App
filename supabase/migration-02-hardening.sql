@@ -48,4 +48,4 @@ create policy tasks_insert on public.tasks
 --    now means editing this constraint, not just src/lib/constants.ts.
 alter table public.balances drop constraint if exists balances_daily_cap;
 alter table public.balances add constraint balances_daily_cap
-  check (minutes_earned_total <= 60);
+  check (minutes_earned_total between 0 and 60);

@@ -131,8 +131,12 @@ export async function updateTask(
   const db = requireClient()
   // Editing a title after the list is locked is allowed but flagged (spec 4.2).
   const full = afterConfirmation ? { ...patch, edited_after_confirmation: true } : patch
-  const { error } = await db.from('tasks').update(full).eq('id', id)
+  // PostgREST answers 204 for an UPDATE that RLS filtered to zero rows, so the
+  // returned rows are checked rather than the error — otherwise completeTask
+  // could grant minutes for a task it never actually marked verified.
+  const { data, error } = await db.from('tasks').update(full).eq('id', id).select('id')
   if (error) throw error
+  if (!data || data.length === 0) throw new Error('That task could not be updated.')
 }
 
 /**
@@ -193,8 +197,9 @@ async function writeBalance(balance: Balance): Promise<Balance> {
       { onConflict: 'user_id,date' },
     )
     .select()
-    .single()
+    .maybeSingle()
   if (error) throw error
+  if (!data) throw new Error('Could not update your balance.')
   return data as Balance
 }
 
@@ -208,6 +213,10 @@ async function writeBalance(balance: Balance): Promise<Balance> {
  */
 export async function completeTask(userId: string, task: Task): Promise<number> {
   const balance = await getBalance(userId)
+  // DAILY_CAP_MINUTES is mirrored by the balances_daily_cap CHECK constraint in
+  // supabase/schema.sql. Tuning it (spec section 3 says to, after week 1) means
+  // changing both, or the database will reject a grant this function considers
+  // legitimate.
   const room = Math.max(0, DAILY_CAP_MINUTES - balance.minutes_earned_total)
   const granted = Math.min(TIER_MINUTES[task.tier], room)
 
@@ -288,11 +297,16 @@ export async function startSession(
 
 export async function endSession(id: string): Promise<void> {
   const db = requireClient()
-  const { error } = await db
+  // Same zero-row trap as updateTask, and worse here: a silent no-op leaves the
+  // session open, so the dashboard bounces straight back to it — an OK button
+  // that appears to do nothing.
+  const { data, error } = await db
     .from('sessions')
     .update({ ended_at: new Date().toISOString() })
     .eq('id', id)
+    .select('id')
   if (error) throw error
+  if (!data || data.length === 0) throw new Error('Could not close that session.')
 }
 
 export async function listSessions(userId: string): Promise<AppSession[]> {

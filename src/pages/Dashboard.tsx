@@ -32,6 +32,7 @@ export default function Dashboard({ userId }: { userId: string }) {
   const [balance, setBalance] = useState<Balance | null>(null)
   const [app, setApp] = useState(TRACKED_APPS[0])
   const [error, setError] = useState<string | null>(null)
+  const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const navigate = useNavigate()
 
@@ -56,8 +57,16 @@ export default function Dashboard({ userId }: { userId: string }) {
   async function onComplete(task: Task) {
     setBusy(true)
     setError(null)
+    setNotice(null)
     try {
-      await completeTask(userId, task)
+      const granted = await completeTask(userId, task)
+      // Silently not moving the balance is the expected end state of a
+      // productive day, so it has to be said out loud rather than looking broken.
+      if (granted === 0) {
+        setNotice(`Done — but you have hit the ${DAILY_CAP_MINUTES} minute daily cap, so no minutes were added.`)
+      } else if (granted < TIER_MINUTES[task.tier]) {
+        setNotice(`Done — ${granted} min added instead of ${TIER_MINUTES[task.tier]}, the daily cap is close.`)
+      }
       await reload()
     } catch (e) {
       setError((e as Error).message)
@@ -159,6 +168,7 @@ export default function Dashboard({ userId }: { userId: string }) {
         ))}
       </div>
 
+      {notice && <p className="mt-4 border border-amber-500 bg-amber-50 p-2 text-amber-800">{notice}</p>}
       {error && <p className="mt-4 text-red-600">{error}</p>}
     </section>
   )

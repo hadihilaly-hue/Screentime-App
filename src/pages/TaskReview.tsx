@@ -88,7 +88,10 @@ export default function TaskReview({
             <div className="mt-2 flex flex-wrap items-center gap-2 text-sm">
               {confirmed ? (
                 // Re-tiering after confirmation would let a Tier 3 task be bumped to
-                // Tier 1 for four times the minutes, so the price is fixed at lock-in.
+                // Tier 1 for four times the minutes. This is a UI lock only —
+                // tasks_update has no tier or confirmation guard, so the console
+                // still gets through. Per spec section 7, Phase 1 measures
+                // cheating rather than preventing it.
                 <span className="border px-2 py-1">
                   T{task.tier} · {TIER_MINUTES[task.tier]}m
                 </span>
