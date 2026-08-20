@@ -35,7 +35,7 @@ export function MorningGate({
       speech.stop()
       localStorage.setItem(transcriptKey(date), text)
       const drafts = await api.structureTasks(text)
-      await api.insertTasks(userId, date, drafts, false)
+      await api.insertTasks(userId, date, drafts)
       await onDone()
       navigate('/review')
     } catch (err) {
@@ -112,6 +112,10 @@ export function MorningGate({
           >
             Skip AI — type the list myself
           </Button>
+          <p className="text-center text-xs text-gray-600">
+            Tasks you tier yourself have no suggestion to override, so they're counted
+            as self-tiered in Sunday's review.
+          </p>
         </div>
       </div>
     </Screen>

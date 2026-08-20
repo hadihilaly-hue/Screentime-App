@@ -60,12 +60,14 @@ export function TaskReview({
   async function addTask() {
     const title = newTitle.trim()
     if (!title) return
+    // claude_suggested_tier stays null: you tiered this one yourself, so there
+    // is no suggestion to override — and recording your own pick as Claude's
+    // would make the override log quietly useless.
     await run(() =>
       api.insertTasks(
         userId,
         date,
-        [{ title, tier: newTier, proof_hint: '', self_report_only: false, claude_suggested_tier: newTier }],
-        confirmed,
+        [{ title, tier: newTier, proof_hint: '', self_report_only: false, claude_suggested_tier: null }],
         tasks.length,
       ),
     )

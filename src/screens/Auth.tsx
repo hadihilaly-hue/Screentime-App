@@ -2,6 +2,13 @@ import { useState } from 'react'
 import { supabase } from '../lib/supabase'
 import { Button, Card, ErrorNote, Screen } from '../components/ui'
 
+/**
+ * This is a tool for one person (spec §9). Signup is off unless
+ * VITE_ALLOW_SIGNUP=true — turn it on once to create your account, then turn it
+ * off again and disable signups in the Supabase dashboard.
+ */
+const signupAllowed = import.meta.env.VITE_ALLOW_SIGNUP === 'true'
+
 export function Auth() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
@@ -55,13 +62,15 @@ export function Auth() {
             <Button type="submit" disabled={busy}>
               {busy ? '…' : mode === 'signin' ? 'Sign in' : 'Create account'}
             </Button>
-            <Button
-              type="button"
-              variant="ghost"
-              onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
-            >
-              {mode === 'signin' ? 'No account yet?' : 'Already have an account?'}
-            </Button>
+            {signupAllowed && (
+              <Button
+                type="button"
+                variant="ghost"
+                onClick={() => setMode(mode === 'signin' ? 'signup' : 'signin')}
+              >
+                {mode === 'signin' ? 'No account yet?' : 'Already have an account?'}
+              </Button>
+            )}
           </form>
         </Card>
       </div>

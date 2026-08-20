@@ -106,11 +106,15 @@ export async function structureTasks(transcript: string): Promise<DraftTask[]> {
   }))
 }
 
+/**
+ * `created_after_confirmation` is deliberately NOT sent: a database trigger
+ * derives it from daily_state. The flag exists to make late additions visible
+ * to future-you, so the client that adds them doesn't get a vote.
+ */
 export async function insertTasks(
   userId: string,
   date: string,
   drafts: DraftTask[],
-  afterConfirmation: boolean,
   startPosition = 0,
 ): Promise<Task[]> {
   const rows = drafts.map((d, i) => ({
@@ -118,10 +122,9 @@ export async function insertTasks(
     date,
     title: d.title.trim().slice(0, 200),
     tier: d.tier,
-    claude_suggested_tier: d.claude_suggested_tier ?? null,
+    claude_suggested_tier: d.claude_suggested_tier,
     proof_hint: d.proof_hint || null,
     self_report_only: d.self_report_only,
-    created_after_confirmation: afterConfirmation,
     position: startPosition + i,
   }))
   return unwrap(supabase.from('tasks').insert(rows).select()) as Promise<Task[]>

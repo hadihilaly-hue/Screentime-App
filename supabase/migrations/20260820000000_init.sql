@@ -201,6 +201,21 @@ create trigger on_auth_user_created
 -- ---------------------------------------------------------------------------
 -- Helpers
 -- ---------------------------------------------------------------------------
+
+-- The client supplies its own local calendar date (that is the whole midnight
+-- reset — see the header). The server cannot know the device's timezone, but it
+-- can refuse anything more than a day either side of its own UTC date, which is
+-- the difference between "I'm in Auckland" and "I set my clock to next week to
+-- get another 60 minutes".
+create function assert_plausible_date(p_date date) returns void
+language plpgsql immutable as $$
+begin
+  if p_date is null or p_date < current_date - 1 or p_date > current_date + 1 then
+    raise exception 'date % is not within a day of the server date', p_date;
+  end if;
+end;
+$$;
+
 create function ensure_config(p_user_id uuid) returns app_config
 language plpgsql security definer set search_path = public as $$
 declare
@@ -224,6 +239,33 @@ begin
   end;
 end;
 $$;
+
+-- ---------------------------------------------------------------------------
+-- Task insert guard. The client says what a task is called and how hard it is;
+-- it does not get to say whether it added the task after locking the day, nor
+-- to insert one that arrives already verified.
+-- ---------------------------------------------------------------------------
+create function tasks_insert_guard() returns trigger
+language plpgsql security definer set search_path = public as $$
+begin
+  new.created_after_confirmation := coalesce(
+    (select d.list_confirmed from daily_state d
+      where d.user_id = new.user_id and d.date = new.date),
+    false);
+  new.status             := 'todo';
+  new.minutes_awarded    := 0;
+  new.verified_at        := null;
+  new.proof_urls         := '{}';
+  new.verification_notes := null;
+  new.follow_up_question := null;
+  new.follow_up_answer   := null;
+  return new;
+end;
+$$;
+
+create trigger tasks_insert_guard_trg
+  before insert on tasks
+  for each row execute function tasks_insert_guard();
 
 -- ---------------------------------------------------------------------------
 -- _credit_task — the only path by which minutes are created.
@@ -323,6 +365,23 @@ begin
 end;
 $$;
 
+-- A self-report task (§6a: "self-report, no photo needed") earns its minutes,
+-- but no photo was ever looked at, so it is logged as MANUAL rather than
+-- VERIFIED. Service-role only — verify-proof checks self_report_only first.
+create function credit_self_reported_task(p_task_id uuid, p_reason text)
+returns json
+language plpgsql security definer set search_path = public as $$
+declare
+  owner uuid;
+begin
+  select user_id into owner from tasks where id = p_task_id;
+  if owner is null then
+    raise exception 'task not found';
+  end if;
+  return _credit_task(owner, p_task_id, 'MANUAL', p_reason, '{}', false);
+end;
+$$;
+
 -- Client entry point for the no-AI path (Weekend 1, or a task whose proof_hint
 -- is "self-report, no photo needed"). Logged as MANUAL so it is impossible to
 -- mistake for a verified proof in the weekly review.
@@ -344,7 +403,8 @@ create function log_verification_attempt(
   p_reason text,
   p_follow_up_question text default null,
   p_follow_up_answer text default null,
-  p_proof_urls text[] default '{}'
+  p_proof_urls text[] default '{}',
+  p_forced_follow_up boolean default false
 ) returns void
 language plpgsql security definer set search_path = public as $$
 declare
@@ -356,9 +416,10 @@ begin
   end if;
 
   insert into verification_attempts
-    (user_id, task_id, date, verdict, reason, follow_up_question, follow_up_answer, proof_urls)
+    (user_id, task_id, date, verdict, reason, follow_up_question, follow_up_answer, proof_urls, forced_follow_up)
   values
-    (t.user_id, p_task_id, t.date, p_verdict, p_reason, p_follow_up_question, p_follow_up_answer, coalesce(p_proof_urls, '{}'));
+    (t.user_id, p_task_id, t.date, p_verdict, p_reason, p_follow_up_question, p_follow_up_answer,
+     coalesce(p_proof_urls, '{}'), p_forced_follow_up);
 
   update tasks set
     status             = case when p_verdict = 'REJECTED' then 'rejected'::task_status else 'pending'::task_status end,
@@ -383,6 +444,11 @@ declare
 begin
   if auth.uid() is null then
     raise exception 'not authenticated';
+  end if;
+  perform assert_plausible_date(p_date);
+
+  if p_minutes not in (5, 10, 15, 20) then
+    raise exception 'sessions are 5, 10, 15 or 20 minutes';
   end if;
 
   select count(*) into live from sessions
@@ -446,6 +512,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
+  perform assert_plausible_date(p_date);
 
   select count(*) into n from tasks where user_id = auth.uid() and date = p_date;
   if n = 0 then
@@ -473,7 +540,12 @@ grant usage on schema public to anon, authenticated;
 
 grant select, insert, update           on app_config     to authenticated;
 grant select, insert, update           on daily_state    to authenticated;
-grant select, insert, update, delete   on tasks          to authenticated;
+grant select, insert, delete            on tasks          to authenticated;
+-- Column-level: the client may rename, re-tier and reorder a task. It may NOT
+-- touch status, minutes_awarded, claude_suggested_tier, created_after_confirmation
+-- or proof_urls — those are the record §7 says must survive, and a blanket
+-- UPDATE grant would let one console call erase all of them.
+grant update (title, tier, position)   on tasks          to authenticated;
 grant select, insert, update           on cheat_reports  to authenticated;
 grant select                           on balances       to authenticated;
 grant select                           on sessions       to authenticated;
@@ -483,9 +555,11 @@ grant select                           on verification_attempts to authenticated
 
 revoke all on function _credit_task(uuid, uuid, verification_verdict, text, text[], boolean) from public, anon, authenticated;
 revoke all on function credit_verified_task(uuid, text, text[], boolean) from public, anon, authenticated;
-revoke all on function log_verification_attempt(uuid, verification_verdict, text, text, text, text[]) from public, anon, authenticated;
+revoke all on function credit_self_reported_task(uuid, text) from public, anon, authenticated;
+revoke all on function log_verification_attempt(uuid, verification_verdict, text, text, text, text[], boolean) from public, anon, authenticated;
 revoke all on function ensure_config(uuid) from public, anon, authenticated;
 revoke all on function tier_minutes(uuid, int) from public, anon, authenticated;
+revoke all on function assert_plausible_date(date) from public, anon, authenticated;
 
 grant execute on function credit_manual_task(uuid, text) to authenticated;
 grant execute on function start_session(date, text, int) to authenticated;

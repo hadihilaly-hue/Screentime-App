@@ -3,6 +3,7 @@ import { StartSession } from '../components/StartSession'
 import { Button, Card, Screen, StatusChip, TierBadge } from '../components/ui'
 import { useStreak } from '../hooks/useStreak'
 import * as api from '../lib/api'
+import { isSunday } from '../lib/day'
 import { supabase } from '../lib/supabase'
 import type { AppConfig, Balance, Session, Task, Tier } from '../lib/types'
 
@@ -62,6 +63,18 @@ export function Dashboard({
             <p className="mt-1 text-xs text-gray-500">{remainingCap} min left under the cap</p>
           </div>
         </header>
+
+        {isSunday() && (
+          <Link to="/weekly">
+            <Card className="border-emerald-700">
+              <p className="text-sm font-semibold text-emerald-300">It's Sunday.</p>
+              <p className="mt-1 text-sm text-gray-300">
+                Read the week back — completion, where the minutes went, and the parts you'd
+                rather not look at.
+              </p>
+            </Card>
+          </Link>
+        )}
 
         <StartSession date={date} available={available} unlimited={unlimited} refresh={refresh} />
 

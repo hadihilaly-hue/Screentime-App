@@ -41,6 +41,10 @@ In the dashboard, turn **off** email confirmation under Authentication → Provi
 → Email if you want to sign in immediately after creating your account. This is a
 one-person app; there is nobody to confirm to.
 
+Once your account exists, turn **off** signups (Authentication → Providers → Email
+→ "Allow new users to sign up") and drop `VITE_ALLOW_SIGNUP` from your deploy. The
+app is on a public URL; §9 of the spec says it's a tool for one person.
+
 ### 2. Edge Functions
 
 ```bash
@@ -63,6 +67,9 @@ cp .env.example .env.local     # fill in URL + anon key from Settings → API
 npm install
 npm run dev
 ```
+
+The sign-in screen has no "create account" option unless you set
+`VITE_ALLOW_SIGNUP=true`. Set it, make your one account, then unset it.
 
 ### 4. Deploy
 
@@ -101,15 +108,20 @@ enforced in Postgres:
 | Daily cap of 60 earned minutes | `_credit_task`, applied inside the same transaction that verifies |
 | No double credit for one task | `_credit_task` raises if the task is already verified |
 | No banking overnight | `balances` is keyed by date; tomorrow is a different row |
-| One session at a time, no overspend | `start_session` locks the balance row |
+| A rolled-forward clock can't mint a second daily cap | `assert_plausible_date` rejects a date more than a day off server UTC |
+| One session at a time, no overspend, 5/10/15/20 only | `start_session` locks the balance row |
 | Tasks can't be deleted after confirming | RLS `delete` policy checks `daily_state.list_confirmed` |
-| Rejections and overrides can't be erased | `verification_attempts` has no `delete` policy |
+| You can't self-declare a task verified, or un-flag a late addition | column-level `GRANT UPDATE (title, tier, position)` — those are the only columns the client can write |
+| Late additions are flagged by the server, not self-reported | `tasks_insert_guard` trigger reads `daily_state` |
+| Rejections, spot checks and overrides can't be erased | `verification_attempts` has no `delete` policy; `claude_suggested_tier` is not client-writable |
 | Photos must be fresh | `verify-proof` rejects a capture stamp older than 2 minutes |
 
 The one deliberate escape hatch is `credit_manual_task`, which the client *can*
 call. It exists so the app is usable before the Edge Functions are deployed and
 when the API is down. It logs the credit as `MANUAL`, and the weekly review counts
-those separately under "Credited without AI verification".
+those separately and reports what share of your completion rate was actually
+verified from a photo. Self-report tasks (the "no photo needed" tier from §6a of
+the spec) are logged the same way, for the same reason: nobody looked at anything.
 
 ## Layout
 
@@ -135,4 +147,4 @@ supabase/
   you free minutes.
 - **Capture time on the fallback path is the file's own mtime.** Picking a photo
   from last Tuesday fails the 2-minute window instead of quietly passing.
-- Ship ugly. Tailwind defaults, no animations, one accent colour.
+- Ship ugly. Tailwind defaults, no animations, one accent colour, one palette.

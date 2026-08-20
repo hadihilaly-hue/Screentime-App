@@ -81,7 +81,8 @@ export type DraftTask = {
   tier: Tier
   proof_hint: string
   self_report_only: boolean
-  claude_suggested_tier: Tier
+  /** null for a task you typed in yourself — there was no suggestion to override. */
+  claude_suggested_tier: Tier | null
 }
 
 export type VerifyResponse = {

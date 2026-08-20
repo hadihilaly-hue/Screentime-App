@@ -25,7 +25,7 @@ export function Button({ variant = 'primary', className = '', ...props }: Button
   return (
     <button
       {...props}
-      className={`rounded-lg px-4 py-3 text-base font-semibold transition-colors disabled:cursor-not-allowed ${styles} ${className}`}
+      className={`rounded-lg px-4 py-3 text-base font-semibold disabled:cursor-not-allowed ${styles} ${className}`}
     />
   )
 }
@@ -69,7 +69,7 @@ export function ErrorNote({ children }: { children: ReactNode }) {
 export function Spinner({ label = 'Loading…' }: { label?: string }) {
   return (
     <div className="flex flex-1 items-center justify-center py-16 text-gray-500">
-      <span className="animate-pulse">{label}</span>
+      <span>{label}</span>
     </div>
   )
 }

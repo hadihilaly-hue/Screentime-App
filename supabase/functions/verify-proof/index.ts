@@ -117,11 +117,11 @@ Deno.serve(async (req) => {
       if (!task.self_report_only) {
         return fail('This task needs a photo.')
       }
-      const { data: credit, error } = await db.rpc('credit_verified_task', {
+      // Logged as MANUAL, not VERIFIED: no photo was ever looked at. The
+      // weekly review counts these separately from proofs Claude actually saw.
+      const { data: credit, error } = await db.rpc('credit_self_reported_task', {
         p_task_id: taskId,
         p_reason: 'Self-report task — no photo evidence required.',
-        p_proof_urls: [],
-        p_forced_follow_up: false,
       })
       if (error) return fail(error.message)
       return json({ verdict: 'VERIFIED', reason: 'Logged as self-reported.', credit })
@@ -162,12 +162,24 @@ Deno.serve(async (req) => {
         textOf(response.content),
       )
 
+      // Was the question a random spot check rather than a real doubt? Carry
+      // that through so the weekly review can count spot checks honestly.
+      const { data: priorAttempt } = await db
+        .from('verification_attempts')
+        .select('forced_follow_up')
+        .eq('task_id', taskId)
+        .eq('verdict', 'FOLLOW_UP')
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle()
+      const wasSpotCheck = priorAttempt?.forced_follow_up ?? false
+
       if (result.verdict === 'VERIFIED') {
         const { data: credit, error } = await db.rpc('credit_verified_task', {
           p_task_id: taskId,
           p_reason: result.reason,
           p_proof_urls: task.proof_urls ?? [],
-          p_forced_follow_up: false,
+          p_forced_follow_up: wasSpotCheck,
         })
         if (error) return fail(error.message)
         await db.from('tasks').update({ follow_up_answer: answer }).eq('id', taskId)
@@ -181,6 +193,7 @@ Deno.serve(async (req) => {
         p_follow_up_question: task.follow_up_question,
         p_follow_up_answer: answer,
         p_proof_urls: task.proof_urls ?? [],
+        p_forced_follow_up: wasSpotCheck,
       })
       if (error) return fail(error.message)
       return json({ verdict: 'REJECTED', reason: result.reason })
@@ -255,6 +268,7 @@ Deno.serve(async (req) => {
         p_follow_up_question: question,
         p_follow_up_answer: null,
         p_proof_urls: paths,
+        p_forced_follow_up: forced,
       })
       if (error) return fail(error.message)
       return json({

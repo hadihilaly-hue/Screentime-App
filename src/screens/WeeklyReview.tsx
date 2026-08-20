@@ -49,6 +49,14 @@ export function WeeklyReview({ userId }: { userId: string }) {
     if (!data) return null
     const { tasks, sessions, balances, attempts, cheats } = data
     const verified = tasks.filter((t) => t.status === 'verified')
+    // A MANUAL attempt means nothing was ever looked at — either the AI was down
+    // or the task was self-report-only. Those still count as completed, but the
+    // headline number would lie if it didn't say how many of them there were.
+    const unprovenIds = new Set(
+      attempts.filter((a) => a.verdict === 'MANUAL').map((a) => a.task_id),
+    )
+    const proven = verified.filter((t) => !unprovenIds.has(t.id))
+    const selfTiered = tasks.filter((t) => t.claude_suggested_tier === null)
     const overrides = tasks.filter(
       (t) => t.claude_suggested_tier !== null && t.claude_suggested_tier !== t.tier,
     )
@@ -72,7 +80,10 @@ export function WeeklyReview({ userId }: { userId: string }) {
       }),
       totalTasks: tasks.length,
       verifiedTasks: verified.length,
+      provenTasks: proven.length,
       completionRate: tasks.length ? Math.round((verified.length / tasks.length) * 100) : 0,
+      provenRate: tasks.length ? Math.round((proven.length / tasks.length) * 100) : 0,
+      selfTieredTasks: selfTiered.length,
       minutesEarned: earned,
       minutesSpent: spent,
       minutesExpired: Math.max(earned - spent, 0),
@@ -151,6 +162,12 @@ export function WeeklyReview({ userId }: { userId: string }) {
           <Stat label="min earned" value={stats.minutesEarned} />
           <Stat label="min spent" value={stats.minutesSpent} />
         </div>
+        {stats.provenRate !== stats.completionRate && (
+          <p className="-mt-3 text-xs text-amber-300">
+            {stats.provenRate}% of that was verified from a photo. The rest was credited
+            without anyone looking at evidence.
+          </p>
+        )}
 
         <Card>
           <h2 className="mb-2 text-sm font-semibold text-gray-400">Day by day</h2>
@@ -213,8 +230,12 @@ export function WeeklyReview({ userId }: { userId: string }) {
               <span className="tabular-nums">{stats.followUps}</span>
             </li>
             <li className="flex justify-between">
-              <span>Credited without AI verification</span>
+              <span>Credited without looking at a photo</span>
               <span className="tabular-nums">{stats.manualCredits}</span>
+            </li>
+            <li className="flex justify-between">
+              <span>Tasks you tiered yourself (no Claude suggestion)</span>
+              <span className="tabular-nums">{stats.selfTieredTasks}</span>
             </li>
             <li className="flex justify-between">
               <span>Self-reported opens with no session</span>
