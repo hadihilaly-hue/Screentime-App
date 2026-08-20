@@ -155,6 +155,41 @@ async function evictOpenTabs(domain) {
   }
 }
 
+/**
+ * Send every tab sitting on a blocked domain to the block page.
+ *
+ * The single eviction path, run on every sync against every domain that is
+ * blocked right now — deliberately not only on the sync that first re-applies
+ * the rules. Transition detection was the bug: end a session early and the
+ * rules came back, but the tab you were already on kept working. Any of these
+ * defeated it, and all of them are ordinary:
+ *
+ *   * A redirect rule only sees network requests. Reloading a site with a
+ *     service worker (Snapchat has one) can be answered from its cache without
+ *     one, so the rule never fires and the page stays usable.
+ *   * A transition observed in a sync that ran with no tab open, or missed
+ *     because the rules were already back, never came round again.
+ *   * One rejected chrome.tabs.update threw out of the loop and took the rest
+ *     of the sync's evictions with it.
+ *
+ * Blocked means no tab may sit on it, so that is what this asserts, every time,
+ * for every reason a site becomes blocked: expiry, an early end noticed by the
+ * poll or the alarm, a window boundary at 9:00am or midnight, or signing out.
+ * It costs one tabs.query per blocked site per poll and normally finds nothing,
+ * because an evicted tab is on the block page and no longer matches.
+ */
+async function evictBlockedTabs(domains) {
+  for (const domain of domains) {
+    try {
+      await evictOpenTabs(domain)
+    } catch (e) {
+      // One tab refusing to be updated must not cost the other sites their
+      // eviction, nor the rest of this sync its alarm and status write.
+      console.warn(`EarnedTime: could not evict tabs on ${domain}`, e)
+    }
+  }
+}
+
 async function runSync() {
   const blockable = sites()
   const phase = phaseAt()
@@ -213,20 +248,14 @@ async function runSync() {
     unlocked.has(site.domain) ? [] : rulesFor(site, i),
   )
 
-  const before = await chrome.declarativeNetRequest.getDynamicRules()
   await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: allIds, addRules })
 
-  // Only evict tabs for sites that were unblocked a moment ago, so an open tab
-  // is not yanked on every poll while nothing has changed. This is also what
-  // clears the screen at 9:00am and at midnight: the boundary alarm re-runs
-  // this, the site flips to blocked, and whatever is open gets sent to the
-  // block page.
-  const wasBlocked = new Set(before.map((r) => r.id))
-  for (const [i, site] of blockable.entries()) {
-    const [mainId] = ruleIds(i)
-    const nowBlocked = !unlocked.has(site.domain)
-    if (nowBlocked && !wasBlocked.has(mainId)) await evictOpenTabs(site.domain)
-  }
+  // Rules first, then tabs: a tab evicted before the rules were back could
+  // navigate straight to the site again. Every blocked domain is checked, not
+  // just the ones that changed this pass — see evictBlockedTabs.
+  await evictBlockedTabs(
+    blockable.filter((site) => !unlocked.has(site.domain)).map((site) => site.domain),
+  )
 
   // Re-check exactly when the earliest running session ends, or when the window
   // changes, whichever comes first. Without the boundary the 9:00am block would

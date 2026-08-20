@@ -158,9 +158,10 @@ let busy = false
  * The whole page above the quote is a function of the window (spec section 3A).
  *
  * Spend window: shield in accent, balance, four length buttons — tapping one is
- * what starts the session. Every other window: no buttons whatsoever, and a
- * slab saying when the wall comes down. There is no state, and no amount of
- * clicking, that produces a session button at 2pm.
+ * what starts the session. Locked windows: no buttons whatsoever, and a slab
+ * saying when the wall comes down. The open window gets neither panel, since
+ * nothing is blocked then and the page is on its way out anyway. There is no
+ * state, and no amount of clicking, that produces a session button at 2pm.
  */
 function renderWindow() {
   const phase = phaseAt()

@@ -38,18 +38,46 @@ export default function Dashboard({ userId }: { userId: string }) {
   // mid-write. A ref rather than the state value so the interval is not torn
   // down and rebuilt every time a task is completed.
   const busyRef = useRef(false)
+  /**
+   * Which reload is allowed to write to state.
+   *
+   * The busy ref alone only stops a poll that has not started yet. One already
+   * awaiting getBalance when you tap Complete resolves *after* the completion's
+   * own reload and put the pre-completion balance back, so the number you had
+   * just earned vanished for up to ten seconds. Every reload takes a ticket and
+   * drops its results if a newer one has been issued since.
+   */
+  const reloadSeq = useRef(0)
+  /** Whether the banner on screen came from a failed poll, so recovery clears it. */
+  const errorFromReload = useRef(false)
   const navigate = useNavigate()
 
   const reload = useCallback(async () => {
+    const seq = ++reloadSeq.current
+    const stale = () => seq !== reloadSeq.current
     try {
       const active = await getActiveSession(userId)
+      if (stale()) return
       if (active) {
         navigate('/session')
         return
       }
-      setTasks(await listTasks(userId))
-      setBalance(await getBalance(userId))
+      const nextTasks = await listTasks(userId)
+      const nextBalance = await getBalance(userId)
+      if (stale()) return
+      setTasks(nextTasks)
+      setBalance(nextBalance)
+      // Clear only a banner a previous poll put up. A failure from an action
+      // stays until the next action — the poll runs every ten seconds, and
+      // wiping the reason a task refused to complete is worse than a stale
+      // banner.
+      if (errorFromReload.current) {
+        errorFromReload.current = false
+        setError(null)
+      }
     } catch (e) {
+      if (stale()) return
+      errorFromReload.current = true
       setError((e as Error).message)
     }
   }, [userId, navigate])
@@ -92,6 +120,7 @@ export default function Dashboard({ userId }: { userId: string }) {
   async function onComplete(task: Task) {
     busyRef.current = true
     setBusy(true)
+    errorFromReload.current = false
     setError(null)
     setNotice(null)
     try {
@@ -105,6 +134,7 @@ export default function Dashboard({ userId }: { userId: string }) {
       }
       await reload()
     } catch (e) {
+      errorFromReload.current = false
       setError((e as Error).message)
     }
     busyRef.current = false

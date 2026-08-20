@@ -172,8 +172,15 @@ refresh a few seconds later cannot overwrite the message worth reading.
 - The popup's **Re-check now** forces the same immediate re-check. Syncs are
   serialised, so the popup, the block page and the alarm cannot interleave two
   rule rewrites and leave the loser's rules behind.
-- When a site goes back to blocked, tabs already sitting on it are redirected
-  too — you do not have to reload for the block to come back.
+- **Every sync sweeps the tabs**, not just the one that re-applies a rule: any
+  tab sitting on a blocked domain is sent to the block page, every poll, for
+  every reason the site is blocked (expiry, an early end, a window boundary,
+  signing out). It was transition-detected before, and that missed the case
+  that matters — a redirect rule only sees network requests, so reloading a
+  site with a service worker can be answered from its cache and never trips it.
+  Ending a session early re-blocked the rule while the tab you were already on
+  carried on working. A tab that refuses to be updated is logged and retried on
+  the next poll rather than taking the rest of the sweep down with it.
 - **It fails closed, after a grace window.** Signed out is immediate: everything
   blocks. A failed *check* — offline, or Supabase erroring — is tolerated for
   `graceFailures` consecutive polls (default 3, set it to 0 for the old

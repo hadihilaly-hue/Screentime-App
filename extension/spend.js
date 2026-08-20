@@ -49,11 +49,24 @@ async function swapAvailable(userId, from, to) {
  * what a refund has to put back.
  */
 async function deduct(userId, minutes) {
+  const seen = []
   for (let attempt = 0; attempt < 2; attempt++) {
     const available = await readBalance()
     if (available === null) throw new Error('Sign in from the extension icon first.')
     if (available < minutes) throw new Error(`Only ${available} minutes available.`)
     if (await swapAvailable(userId, available, available - minutes)) return available
+    seen.push(available)
+  }
+
+  // Two refused swaps with the balance sitting at the same value both times is
+  // not a race — nothing moved. The row exists and is readable but will not
+  // take this write, which in practice means the extension is signed in as a
+  // different account than the row belongs to. "Try again" is advice that would
+  // never work, so say the thing that would.
+  if (seen[0] === seen[1]) {
+    throw new Error(
+      'Your balance would not accept the write. Check the extension is signed in as the same account as the app, then reload it.',
+    )
   }
   throw new Error('Your balance changed while that was starting. Try again.')
 }
@@ -92,6 +105,11 @@ export async function startSession(site, minutes) {
     // Put them back rather than silently charging for nothing. The refund is a
     // swap too, from the value this call wrote — if something else has spent in
     // the meantime, refunding to `before` would hand back their minutes as well.
+    //
+    // This covers "the insert did not happen", not "the insert happened and the
+    // answer was lost". A commit whose response times out lands here too, and
+    // refunds minutes for a session that does exist. Closing that needs the
+    // insert and the debit in one transaction, which is a schema change.
     const refunded = await swapAvailable(stored.user_id, before - minutes, before).catch(() => false)
     if (!refunded) throw new Error(`${e.message} — and the ${minutes} minutes could not be refunded.`)
     throw new Error(`${e.message} No minutes were spent.`)

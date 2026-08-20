@@ -86,7 +86,12 @@ window the loop is:
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
    built today. Ending early re-blocks within the poll interval (up to a
    minute), also as built today — the app cannot signal the extension, so the
-   worker notices on its next check rather than on the tap.
+   worker notices on its next check rather than on the tap. **Eviction is
+   unconditional**: every check sends any tab sitting on a blocked site to the
+   block page, rather than only the check that re-applies the rule. A redirect
+   rule only sees network requests, and a site with a service worker can serve
+   a reload from its own cache without making one — so the rule alone is not
+   enough to clear a tab that is already open.
 
 **The open *is* the session start.** You never decide in the abstract how long
 you want; you decide at the door, with the balance in front of you. The web app
