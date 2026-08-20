@@ -17,6 +17,15 @@ async function render() {
     return
   }
 
+  // Trouble is reported before the signed-out early return: signed out is the
+  // state where everything is supposed to be blocked, so a rules write the
+  // browser refused matters more there, not less.
+  const { et_status: status } = await chrome.storage.local.get('et_status')
+  const trouble = []
+  if (status?.rulesError) trouble.push(`Browser refused the block rules: ${status.rulesError}`)
+  if (status?.evictErrors?.length) trouble.push(`Tabs not evicted — ${status.evictErrors.join('; ')}`)
+  errorEl.textContent = trouble.join(' · ')
+
   const session = await getSession()
   el('signed-out').hidden = Boolean(session)
   el('signed-in').hidden = !session
@@ -33,11 +42,13 @@ async function render() {
       ? 'Open a blocked site to spend minutes.'
       : `Spending reopens at ${clockLabel(spendOpensAt())}.`
 
-  const { et_status: status } = await chrome.storage.local.get('et_status')
   const unlocked = status?.unlocked ?? {}
   // A rejected rules write leaves the previous rules in place, so the worker's
-  // decision and what the browser is actually enforcing have come apart. Saying
-  // "blocked" off the decision alone asserts a wall that may not be there.
+  // decision and what the browser is enforcing have come apart, and every row
+  // below is then a claim about the decision only — in both directions.
+  // Asserting a wall that may not be there is one half; asserting an opening
+  // that is not there is the half you actually notice, when the popup offers
+  // nine minutes on a site that will not load.
   const rulesFailed = Boolean(status?.rulesError)
   el('sites').innerHTML = ''
   for (const site of blockableSites(CONFIG.sites)) {
@@ -46,14 +57,17 @@ async function render() {
     const name = document.createElement('span')
     name.textContent = site.label
     const state = document.createElement('span')
-    if (endsAt && phase.kind === 'open') {
+    if (rulesFailed && endsAt) {
+      state.className = 'state-bad'
+      state.textContent = `should be open · ${minutesLeft(endsAt)}m left`
+    } else if (endsAt && phase.kind === 'open') {
       state.className = 'open'
       state.textContent = 'open window'
     } else if (endsAt) {
       state.className = 'open'
       state.textContent = `open · ${minutesLeft(endsAt)}m left`
     } else if (rulesFailed) {
-      state.className = 'error'
+      state.className = 'state-bad'
       state.textContent = 'should be blocked'
     } else {
       state.className = 'blocked'
@@ -65,11 +79,6 @@ async function render() {
   el('checked').textContent = status?.checkedAt
     ? `Last checked ${new Date(status.checkedAt).toLocaleTimeString()}`
     : 'Not checked yet'
-
-  const trouble = []
-  if (status?.rulesError) trouble.push(`Browser refused the block rules: ${status.rulesError}`)
-  if (status?.evictErrors?.length) trouble.push(`Tabs not evicted — ${status.evictErrors.join('; ')}`)
-  errorEl.textContent = trouble.join(' · ')
 }
 
 async function resync() {

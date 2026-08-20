@@ -3,7 +3,10 @@
 // This is the only place a session is created now — the web app's dashboard no
 // longer starts one. The write path mirrors src/lib/db.ts startSession exactly:
 // minutes are deducted first and the session row is inserted second, so a
-// reload mid-start cannot buy the same minutes twice.
+// reload mid-start cannot buy the same minutes twice. That order is a chosen
+// tradeoff rather than a requirement — only the insert has to precede the rules
+// drop — and rollbackSession below is what pays for the choice when the step
+// after the deduction fails.
 
 import { query, insert, patch, todayISO, getSession } from './supabase.js'
 import { canSpend, phaseAt } from './schedule.js'
@@ -124,25 +127,49 @@ export async function startSession(site, minutes) {
 /**
  * Undo a session that was paid for but never let you in.
  *
- * The order cannot be fixed by rearranging it: the worker only unlocks a domain
- * once a session row exists, so the spend genuinely has to happen before the
- * rules can drop. That leaves a window where the minutes are gone and the rules
- * write then fails, and the honest answer to "charged without access" there is
- * to put it back — end the session so it cannot unlock anything later, and
- * refund by the same compare-and-swap the insert path uses, so a refund cannot
- * hand back minutes something else has since spent.
+ * What the ordering actually requires: the worker only unlocks a domain once a
+ * session row exists, so the *insert* has to happen before the rules can drop.
+ * The *debit* does not — it runs first by choice, because deducting up front is
+ * what stops a reload buying the same minutes twice (see the note at the top of
+ * this file). That choice leaves a window where the minutes are gone and the
+ * rules write then fails, and the honest answer to "charged without access" is
+ * to put it back.
  *
- * Returns a list of what could not be undone; empty means the tap left no trace.
+ * **The close gates the refund.** Refunding a session that is still open hands
+ * back the minutes AND leaves a row that unlockedDomains will honour on the
+ * next successful write — paid nothing, wall down anyway, which is worse than
+ * the overcharge it was meant to fix. So: close first, and only refund if the
+ * close verifiably applied. If it did not, the minutes stay spent and the
+ * caller retries.
+ *
+ * The close is filtered on `ended_at=is.null`, so it can only ever close a
+ * running session, never rewrite the end of one that already finished — spec
+ * section 7 wants the log append-only.
+ *
+ * Returns a list of what could not be undone; empty means the tap left no
+ * trace, and a non-empty list means the rollback should be tried again.
  */
 export async function rollbackSession(started) {
   const { session, before, minutes } = started
   const errors = []
 
+  let closed = false
   try {
-    const rows = await patch(`sessions?id=eq.${session.id}`, { ended_at: new Date().toISOString() })
-    if (!rows || rows.length === 0) errors.push('the session could not be closed')
+    const rows = await patch(`sessions?id=eq.${session.id}&ended_at=is.null`, {
+      ended_at: new Date().toISOString(),
+    })
+    closed = Boolean(rows && rows.length)
+    if (!closed) errors.push('the session could not be closed')
   } catch (e) {
     errors.push(`the session could not be closed (${e.message})`)
+  }
+
+  if (!closed) {
+    // Deliberately no refund. An open session plus refunded minutes is a free
+    // unlock; leaving the minutes spent is merely an overcharge, and the retry
+    // clears it.
+    errors.push(`the ${minutes} minutes stay spent until it is`)
+    return errors
   }
 
   const refunded = await swapAvailable(session.user_id, before - minutes, before).catch(() => false)

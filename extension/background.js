@@ -367,10 +367,22 @@ chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
         sendResponse({
           ok: !status?.rulesError,
           error: status?.rulesError ?? null,
+          // Which kind of failure this is, because the caller acts differently
+          // on each. 'rules' is the browser refusing the write, which really
+          // does mean the old rules survived and the site is still blocked.
+          // Anything else is the check not finishing, which says nothing about
+          // the rules at all — and treating the two alike cancelled sessions
+          // that would have worked.
+          errorKind: status?.rulesError ? 'rules' : null,
           unlocked: status?.unlocked ?? {},
+          // A decision held together by the grace window is provisional: the
+          // sessions query failed, so a session written seconds ago is missing
+          // from it for a reason that has nothing to do with whether it exists.
+          heldByGrace: Boolean(status?.heldByGrace),
+          failures: status?.failures ?? 0,
         })
       },
-      (e) => sendResponse({ ok: false, error: String(e) }),
+      (e) => sendResponse({ ok: false, error: String(e), errorKind: 'sync' }),
     )
     return true
   }

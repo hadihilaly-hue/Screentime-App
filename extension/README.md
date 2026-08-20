@@ -101,9 +101,26 @@ From v0.4.0 the block page should visibly have all of:
 
 In the spend window, one tap on a length does all of this in order: check the
 balance, deduct the minutes, insert the session row, have the worker drop the
-rules, and navigate to the URL you originally asked for. If the session row is
-rejected after the deduction, the minutes are refunded rather than silently
-charged for nothing.
+rules, and navigate to the URL you originally asked for.
+
+Only one step of that order is forced: the worker will not unlock a domain until
+a session row exists, so the insert has to come before the rules drop. Deducting
+*before* the insert is a choice, not a necessity — it is what stops a reload
+mid-start buying the same minutes twice — and the price of that choice is a
+window where the minutes are gone and the next step fails. Both failures in that
+window are undone rather than charged for:
+
+- **The insert is rejected** → the minutes are refunded.
+- **The rules write is refused, so the site stays blocked** → the session is
+  closed and the minutes refunded, and the block page says so instead of sending
+  you back into a wall it just charged you for. The close gates the refund: a
+  refunded session that is still open would hand back the minutes *and* unlock
+  the site on the next successful write, so if the close fails the minutes stay
+  spent and the undo is retried on the next check.
+
+A check that simply did not finish, or a decision the worker is holding through
+its grace window, undoes nothing — neither says the rules failed, and treating
+them as if they did cancelled sessions that were about to work.
 
 Outside the spend window there is nothing to tap. `startSession` refuses on the
 clock as well, so even a page left open from 5:55pm cannot be clicked into a
@@ -133,6 +150,12 @@ obvious rather than silent:
 - `MATCHES youtube.com` and still blocked — the worker did not drop the rules.
   The line will say so; reload the extension.
 - `Could not reach Supabase: …` — network or config problem, verbatim.
+- `LAST RULES WRITE FAILED: …` — the browser refused the rule write, so the
+  previous rules are still in force and the worker's decision and what is
+  actually enforced have come apart.
+- `tabs not evicted — …` — a tab on a blocked site would not redirect. It is
+  retried every check; if it persists, the tab is still on a site that should
+  be walled.
 - `N failed check(s), holding last known state` — the worker cannot reach
   Supabase and is inside its grace window; the block has not come back yet.
 - `N failed check(s), blocking until one succeeds` — grace is used up and it has
@@ -184,7 +207,9 @@ refresh a few seconds later cannot overwrite the message worth reading.
   carried on working. Each tab's redirect is guarded on its own, so a tab that
   refuses to be updated — a tab closed between the query and the update rejects
   with "No tab with id", which is ordinary with several tabs on one site — is
-  logged and retried on the next poll without shielding the tabs behind it.
+  logged and retried on the next poll without shielding the tabs behind it, and
+  reported in `et_status` so a tab that will not move is visible in the popup
+  and on the block page rather than only in the console.
 - A rules write that the browser rejects no longer skips the sweep, the expiry
   alarm and the status write. It is recorded, the sweep runs anyway (it is the
   safer half of the pair), and the block page's diagnostics say
