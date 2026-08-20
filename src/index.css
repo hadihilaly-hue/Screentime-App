@@ -1,0 +1,22 @@
+@import "tailwindcss";
+
+/* Phase 1 rule: ship ugly. This file exists only to make the app usable on a
+   phone — safe-area padding, no rubber-band scroll, no text-size surprises. */
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  -webkit-text-size-adjust: 100%;
+  overscroll-behavior-y: none;
+}
+
+.safe-top {
+  padding-top: max(1rem, env(safe-area-inset-top));
+}
+
+.safe-bottom {
+  padding-bottom: max(1rem, env(safe-area-inset-bottom));
+}

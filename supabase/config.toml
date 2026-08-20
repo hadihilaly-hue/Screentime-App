@@ -1,0 +1,10 @@
+project_id = "scrip"
+
+[functions.structure-tasks]
+verify_jwt = true
+
+[functions.verify-proof]
+verify_jwt = true
+
+[functions.weekly-observation]
+verify_jwt = true
