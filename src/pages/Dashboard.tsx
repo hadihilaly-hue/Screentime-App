@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
   completeTask,
@@ -34,6 +34,10 @@ export default function Dashboard({ userId }: { userId: string }) {
   const [error, setError] = useState<string | null>(null)
   const [notice, setNotice] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  // Mirrors `busy` for the poll below, which must not re-read the balance
+  // mid-write. A ref rather than the state value so the interval is not torn
+  // down and rebuilt every time a task is completed.
+  const busyRef = useRef(false)
   const navigate = useNavigate()
 
   const reload = useCallback(async () => {
@@ -54,15 +58,39 @@ export default function Dashboard({ userId }: { userId: string }) {
     void reload()
   }, [reload])
 
-  // The window and the countdown to it are read off the clock, so the clock has
-  // to tick: at 6:00pm this screen has to stop saying "spendable at 6:00 PM"
-  // without anyone reloading it.
+  /**
+   * The clock ticks and the data is re-read on the same beat.
+   *
+   * The clock, because the window is derived from it: at 6:00pm this screen has
+   * to stop saying "spendable at 6:00 PM" without anyone reloading it.
+   *
+   * The data, because sessions now start at the block page (spec section 3A) —
+   * a spend happens somewhere this screen cannot see. Without the re-read the
+   * dashboard sat on the pre-spend balance with no countdown until a manual
+   * reload; reload() navigates to /session when it finds one, so the timer
+   * appears here on its own. Coming back to the tab checks immediately rather
+   * than waiting out the interval.
+   */
   useEffect(() => {
-    const id = setInterval(() => setNow(Date.now()), 10_000)
-    return () => clearInterval(id)
-  }, [])
+    const tick = () => {
+      setNow(Date.now())
+      if (!busyRef.current) void reload()
+    }
+    const id = setInterval(tick, 10_000)
+    const onVisible = () => {
+      if (!document.hidden) tick()
+    }
+    document.addEventListener('visibilitychange', onVisible)
+    window.addEventListener('focus', onVisible)
+    return () => {
+      clearInterval(id)
+      document.removeEventListener('visibilitychange', onVisible)
+      window.removeEventListener('focus', onVisible)
+    }
+  }, [reload])
 
   async function onComplete(task: Task) {
+    busyRef.current = true
     setBusy(true)
     setError(null)
     setNotice(null)
@@ -79,6 +107,7 @@ export default function Dashboard({ userId }: { userId: string }) {
     } catch (e) {
       setError((e as Error).message)
     }
+    busyRef.current = false
     setBusy(false)
   }
 

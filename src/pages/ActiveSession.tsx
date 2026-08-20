@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { endSession, getActiveSession, type AppSession } from '../lib/db'
+import { clockLabel, phaseAt } from '../lib/schedule'
 import { Spinner } from '../ui'
 
 function format(ms: number): string {
@@ -58,8 +59,19 @@ export default function ActiveSession({ userId }: { userId: string }) {
     )
   if (!session) return <Spinner />
 
-  const total = session.minutes * 60_000
-  const endsAt = new Date(session.started_at).getTime() + total
+  // Clamped to the end of the window the session started in (spec section 3A),
+  // exactly as extension/background.js clamps the unlock. Without this the
+  // countdown kept running to 12:15am for a 20-minute session started at
+  // 11:55pm, while the extension had already re-blocked and evicted at
+  // midnight — the timer said you had time the wall had already taken back.
+  const startedAt = new Date(session.started_at).getTime()
+  const wouldEndAt = startedAt + session.minutes * 60_000
+  const windowEndsAt = phaseAt(startedAt).endsAt
+  const endsAt = Math.min(wouldEndAt, windowEndsAt)
+  const cutOff = endsAt < wouldEndAt
+  // The ring depletes over the time actually granted, not the time asked for,
+  // so a cut-off session starts full and still ends empty.
+  const total = Math.max(0, endsAt - startedAt)
   const remaining = endsAt - now
 
   if (remaining <= 0) {
@@ -81,7 +93,7 @@ export default function ActiveSession({ userId }: { userId: string }) {
   }
 
   // Depletes clockwise from full as the session burns down.
-  const left = Math.max(0, remaining) / total
+  const left = total > 0 ? Math.max(0, remaining) / total : 0
 
   return (
     <div className="fixed inset-0 z-50 flex flex-col items-center justify-between bg-ink px-6 safe-top safe-bottom">
@@ -118,6 +130,11 @@ export default function ActiveSession({ userId }: { userId: string }) {
           <span className="mt-1 text-[0.8125rem] font-semibold text-faint">
             of {session.minutes} min
           </span>
+          {cutOff && (
+            <span className="mt-1 text-[0.75rem] font-semibold text-ember">
+              cut off at {clockLabel(endsAt)}
+            </span>
+          )}
         </div>
       </div>
 

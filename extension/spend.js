@@ -16,15 +16,46 @@ export async function readBalance() {
   return rows[0]?.minutes_available ?? 0
 }
 
-async function setAvailable(userId, minutes) {
+/**
+ * Compare-and-swap on the balance: write `to`, but only if it is still `from`.
+ *
+ * The filter carries the value that was read, so PostgREST updates zero rows if
+ * anything moved in between and the caller can see that it lost. Two block
+ * pages tapped in the same second used to be able to read 20 each and start 20
+ * minutes each — both writes landed, neither went negative, and 40 minutes came
+ * out of a 20 minute balance. Returns whether the swap took.
+ *
+ * This narrows the window to the round trip; it does not close it. The real fix
+ * is doing the arithmetic in Postgres, which is a schema change and out of
+ * scope here — src/lib/db.ts still has the same read-modify-write.
+ */
+async function swapAvailable(userId, from, to) {
   const rows = await patch(
-    `balances?user_id=eq.${userId}&date=eq.${todayISO()}`,
-    { minutes_available: minutes, updated_at: new Date().toISOString() },
+    `balances?user_id=eq.${userId}&date=eq.${todayISO()}&minutes_available=eq.${from}`,
+    { minutes_available: to, updated_at: new Date().toISOString() },
   )
   // PostgREST answers 2xx for an UPDATE that RLS or the filter reduced to zero
   // rows, so the rows are checked rather than the status — otherwise a session
   // could be granted against a balance that was never actually debited.
-  if (!rows || rows.length === 0) throw new Error('Could not update your balance.')
+  return Boolean(rows && rows.length > 0)
+}
+
+/**
+ * Deduct `minutes`, re-reading and retrying once if the balance moved.
+ *
+ * One retry, not a loop: a second failure means something else is actively
+ * spending, and quietly winning a race for the user is worse than telling them
+ * to tap again. Returns the balance as it was before the deduction, which is
+ * what a refund has to put back.
+ */
+async function deduct(userId, minutes) {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const available = await readBalance()
+    if (available === null) throw new Error('Sign in from the extension icon first.')
+    if (available < minutes) throw new Error(`Only ${available} minutes available.`)
+    if (await swapAvailable(userId, available, available - minutes)) return available
+  }
+  throw new Error('Your balance changed while that was starting. Try again.')
 }
 
 /**
@@ -44,11 +75,7 @@ export async function startSession(site, minutes) {
   const stored = await getSession()
   if (!stored?.user_id) throw new Error('Sign in from the extension icon first.')
 
-  const available = await readBalance()
-  if (available === null) throw new Error('Sign in from the extension icon first.')
-  if (available < minutes) throw new Error(`Only ${available} minutes available.`)
-
-  await setAvailable(stored.user_id, available - minutes)
+  const before = await deduct(stored.user_id, minutes)
 
   let row
   try {
@@ -59,21 +86,15 @@ export async function startSession(site, minutes) {
       minutes,
       started_at: new Date().toISOString(),
     })
+    if (!row || row.length === 0) throw new Error('The session row was rejected.')
   } catch (e) {
     // The minutes are already gone but there is no session to show for them.
-    // Put them back rather than silently charging for nothing; if the refund
-    // itself fails, say both things happened.
-    try {
-      await setAvailable(stored.user_id, available)
-    } catch {
-      throw new Error(`${e.message} — and the ${minutes} minutes could not be refunded.`)
-    }
-    throw e
-  }
-
-  if (!row || row.length === 0) {
-    await setAvailable(stored.user_id, available)
-    throw new Error('The session row was rejected. No minutes were spent.')
+    // Put them back rather than silently charging for nothing. The refund is a
+    // swap too, from the value this call wrote — if something else has spent in
+    // the meantime, refunding to `before` would hand back their minutes as well.
+    const refunded = await swapAvailable(stored.user_id, before - minutes, before).catch(() => false)
+    if (!refunded) throw new Error(`${e.message} — and the ${minutes} minutes could not be refunded.`)
+    throw new Error(`${e.message} No minutes were spent.`)
   }
 
   const endsAt = new Date(row[0].started_at).getTime() + minutes * 60_000

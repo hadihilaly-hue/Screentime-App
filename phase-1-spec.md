@@ -22,7 +22,7 @@ A web app that turns your daily to-do list into currency for screen time. Phase 
 2. **Speak or type the list.** You ramble it in ("first ACT math section, then bio homework, then upload the program to my calculator..."). Claude structures it into discrete tasks and proposes a tier for each. You can drag to re-tier or edit before confirming.
 3. **Dashboard.** Shows today's tasks grouped by tier, your earned-minutes balance (in its "spendable at 6:00pm" state before the spend window opens), and any active timer.
 4. **Complete a task → submit proof.** Tap the task, camera opens inside the app (no gallery access), you take 1 to 3 photos or a short video of the work. Claude Vision checks it against the task description and either verifies, rejects with a reason, or asks one follow-up question you must answer in the app.
-5. **Spend minutes — but only after 6pm, and only by opening the site.** A verified task deposits minutes into your balance at whatever hour you finish it. Between 6:00pm and midnight, opening a tracked site lands you on the block page, where you pick 5/10/15/20 minutes and that tap starts the session and lets you through. Outside that window the site is simply locked. When the timer hits zero the app shows a full-screen "time's up" state, the site re-blocks, and the session is logged. See section 3A for the full schedule.
+5. **Spend minutes — but only after 6pm, and only by opening the site.** A verified task deposits minutes into your balance at whatever hour you finish it. Between 6:00pm and midnight, opening a tracked site lands you on the block page, where you pick 5/10/15/20 minutes and that tap starts the session and lets you through. Between 9:00am and 6:00pm, and again after midnight, the site is simply locked and no session can start; between 7:00am and 9:00am it is open to begin with and costs nothing. When the timer hits zero the app shows a full-screen "time's up" state, the site re-blocks, and the session is logged. See section 3A for the full schedule.
 6. **Full completion bonus.** All of today's tasks verified = balance becomes unlimited until midnight.
 7. **Midnight reset.** Balances zero out, tasks archive, tomorrow starts at the morning gate again.
 
@@ -40,6 +40,7 @@ Rules:
 
 - Daily cap of 60 earned minutes total (prevents grinding small tasks into infinite Clash Royale).
 - Minutes are a shared balance spendable on any tracked app, in 5/10/15/20 minute sessions, inside the spend window only (section 3A).
+- **The currency has a daily two-hour holiday.** 7:00am–9:00am is open: the tracked sites cost nothing and need no session. That is deliberate — a wall with no door at all gets climbed, and the morning is the one time of day the pull is weakest — but it does mean roughly two of every twenty-four hours are outside the economy entirely. If week 1 shows the morning quietly becoming the whole budget, shorten it; that is the first dial to turn.
 - Unused minutes expire at midnight. No banking. This matters: banking lets you save up for a binge day.
 - Tier assignments are suggested by Claude but you confirm them, so you can't quietly call everything Tier 1. Log when you override Claude's suggestion; review those overrides weekly.
 
@@ -83,7 +84,9 @@ window the loop is:
 3. You tap one. That single tap spends the minutes, writes the session row,
    drops the block, and sends you on to the URL you originally asked for.
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
-   built today. Ending early re-blocks immediately, also as built today.
+   built today. Ending early re-blocks within the poll interval (up to a
+   minute), also as built today — the app cannot signal the extension, so the
+   worker notices on its next check rather than on the tap.
 
 **The open *is* the session start.** You never decide in the abstract how long
 you want; you decide at the door, with the balance in front of you. The web app
@@ -136,7 +139,7 @@ left to good intentions:
 3. **Dashboard.** Minutes balance (big number) with the current window and, before 6pm, a "spendable at 6:00pm" countdown; task list with status chips (todo / pending proof / verified / rejected); streak counter. **No Start Session button** — sessions start at the block page (section 3A), so the dashboard's spend panel is a read-only explanation of when and how the balance can be spent.
 4. **Proof Capture.** In-app camera only (`getUserMedia`, or `<input type="file" accept="image/*" capture="environment">` on iOS which opens the camera directly). Client stamps capture time; server rejects files older than 2 minutes as an upload-bypass guard.
 5. **Verification Result.** Verified (minutes added, small celebration), Rejected (Claude's reason, retake), or Follow-up (one question about the content, your typed answer goes back to Claude for a final verdict).
-6. **Active Session.** Full-screen countdown for the app whose site you opened. Reached by *having* a running session, not by starting one here. "Time's up" state requires a tap to acknowledge and logs the session; ending early logs it too and re-blocks the site straight away.
+6. **Active Session.** Full-screen countdown for the app whose site you opened. Reached by *having* a running session, not by starting one here. The countdown is clamped to the end of the spend window, so a session started at 11:55pm shows five minutes, not twenty — the same clamp the extension applies to the unlock. "Time's up" state requires a tap to acknowledge and logs the session; ending early logs it too, and the site re-blocks on the extension's next check (up to a minute later).
 7. **Weekly Review.** Every Sunday: completion rate, minutes earned vs. spent per app, tier overrides, late-added tasks, and a short Claude-written observation of your patterns with one suggested rule change for next week.
 
 **8. Block page (`extension/blocked.html`).** Not a web-app route — it is what a
@@ -144,7 +147,9 @@ tracked site becomes when it is blocked, and since section 3A it is the only
 place a session can start. It shows the shield, the site's name, your balance,
 one randomly picked quote from `extension/quotes.js` per page load, and either
 the four session-length buttons (spend window, disabled below your balance) or a
-"Locked until 6:00pm / 7:00am" line with no buttons at all (every other window).
+"Locked until 6:00pm / 7:00am" line with no buttons at all (every locked
+window). In the open window it shows neither panel: nothing is blocked then, so
+the page releases itself instead of explaining a wall that is not there.
 It carries the same dark palette and acid accent as the app, so the wall reads as
 part of the same product rather than a browser error.
 
