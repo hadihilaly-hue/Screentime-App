@@ -141,9 +141,15 @@ drop policy if exists sessions_insert on public.sessions;
 create policy sessions_insert on public.sessions
   for insert with check ((select auth.uid()) = user_id);
 
+-- The UPDATE policy only matches sessions that are still RUNNING, so ended_at
+-- can be stamped once and never rewritten. Without "ended_at is null" in the
+-- USING clause, append-only was a client-side convention: every writer politely
+-- filtered on it, and nothing stopped one that did not. A finished session is
+-- part of the record (spec section 7), and its end time is the part that says
+-- how much time was actually spent.
 drop policy if exists sessions_update on public.sessions;
 create policy sessions_update on public.sessions
-  for update using ((select auth.uid()) = user_id)
+  for update using ((select auth.uid()) = user_id and ended_at is null)
                 with check ((select auth.uid()) = user_id);
 
 -- daily_state: read / create / update your own. No delete, and the UPDATE

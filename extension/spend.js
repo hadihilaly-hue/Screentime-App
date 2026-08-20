@@ -5,8 +5,10 @@
 // minutes are deducted first and the session row is inserted second, so a
 // reload mid-start cannot buy the same minutes twice. That order is a chosen
 // tradeoff rather than a requirement — only the insert has to precede the rules
-// drop — and rollbackSession below is what pays for the choice when the step
-// after the deduction fails.
+// drop — and its price is a window where the minutes are gone and the next step
+// fails. A rejected insert is refunded here, because at that point nothing has
+// been created and the undo is one write. A rejected *rules write* is not: see
+// closeRefusedSession.
 
 import { query, insert, patch, todayISO, getSession } from './supabase.js'
 import { canSpend, phaseAt } from './schedule.js'
@@ -119,61 +121,73 @@ export async function startSession(site, minutes) {
   }
 
   const endsAt = new Date(row[0].started_at).getTime() + minutes * 60_000
-  // `before` and `minutes` ride along so the caller can undo the whole thing if
-  // the block never actually lifts — see rollbackSession.
-  return { session: row[0], endsAt: Math.min(endsAt, phase.endsAt), before, minutes }
+  return { session: row[0], endsAt: Math.min(endsAt, phase.endsAt), minutes }
 }
+
+/** 500ms, 1s, 2s, 4s between the five attempts. */
+const CLOSE_ATTEMPTS = 5
+const closeBackoff = (attempt) => 500 * 2 ** (attempt - 1)
+
+const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Undo a session that was paid for but never let you in.
+ * Close a session that was paid for and then refused by the rules write.
  *
- * What the ordering actually requires: the worker only unlocks a domain once a
- * session row exists, so the *insert* has to happen before the rules can drop.
- * The *debit* does not — it runs first by choice, because deducting up front is
- * what stops a reload buying the same minutes twice (see the note at the top of
- * this file). That choice leaves a window where the minutes are gone and the
- * rules write then fails, and the honest answer to "charged without access" is
- * to put it back.
+ * **The minutes are not refunded.** Two rounds of trying to refund them
+ * produced, in order, a free unlock (refunding while the row was still open
+ * left a live session and a restored balance) and then a retry that could never
+ * complete the one failure that persisted (having closed the row, it could not
+ * re-derive that it had, so it looped forever reporting the wrong cause). The
+ * refund was the source of both, and it is buying very little: a rules write
+ * the browser rejects is rare, and being charged for minutes you did not get is
+ * recoverable by finishing another task. A free unlock is not recoverable — it
+ * is the exact thing the schedule exists to prevent — so the policy is now
+ * plainly one-sided. Overcharge on failure, never underlock.
  *
- * **The close gates the refund.** Refunding a session that is still open hands
- * back the minutes AND leaves a row that unlockedDomains will honour on the
- * next successful write — paid nothing, wall down anyway, which is worse than
- * the overcharge it was meant to fix. So: close first, and only refund if the
- * close verifiably applied. If it did not, the minutes stay spent and the
- * caller retries.
+ * That leaves one job, which is worth retrying because it is what stops the
+ * session unlocking the site later on a write that does succeed: end the row.
+ * Filtered on `ended_at=is.null`, so it can only ever close a running session,
+ * never rewrite the end of a finished one (spec section 7).
  *
- * The close is filtered on `ended_at=is.null`, so it can only ever close a
- * running session, never rewrite the end of one that already finished — spec
- * section 7 wants the log append-only.
+ * Zero rows back is checked, not assumed. It usually means the row is not
+ * running — already closed by an earlier attempt, or by the app's End Early —
+ * and the goal is the row not running, not this call being the one to do it.
+ * But PostgREST answers the same way when RLS filters the row, so the state is
+ * read back rather than inferred. Guessing at zero rows is what made the
+ * previous version loop forever reporting a cause that was not true.
  *
- * Returns a list of what could not be undone; empty means the tap left no
- * trace, and a non-empty list means the rollback should be tried again.
+ * Returns `{ closed, attempts, error }`. Never throws.
  */
-export async function rollbackSession(started) {
-  const { session, before, minutes } = started
-  const errors = []
+export async function closeRefusedSession(started) {
+  const { session } = started
+  let error = null
 
-  let closed = false
-  try {
-    const rows = await patch(`sessions?id=eq.${session.id}&ended_at=is.null`, {
-      ended_at: new Date().toISOString(),
-    })
-    closed = Boolean(rows && rows.length)
-    if (!closed) errors.push('the session could not be closed')
-  } catch (e) {
-    errors.push(`the session could not be closed (${e.message})`)
+  for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {
+    try {
+      const rows = await patch(`sessions?id=eq.${session.id}&ended_at=is.null`, {
+        ended_at: new Date().toISOString(),
+      })
+      if (rows === null) {
+        // Signed out. Retrying cannot fix it, and the row is still running.
+        return { closed: false, attempts: attempt, error: 'signed out' }
+      }
+      if (rows.length > 0) return { closed: true, attempts: attempt, error: null }
+
+      // Zero rows: confirm the row really is finished before saying so.
+      const check = await query(`sessions?select=ended_at&id=eq.${session.id}`)
+      if (check === null) return { closed: false, attempts: attempt, error: 'signed out' }
+      if (check.length === 0 || check[0].ended_at) {
+        // Gone, or genuinely ended. Either way it cannot unlock anything.
+        return { closed: true, attempts: attempt, error: null }
+      }
+      // Still running and the write did not take it: something is refusing us.
+      error = 'the session row would not accept the close'
+    } catch (e) {
+      error = e.message
+    }
+    if (attempt < CLOSE_ATTEMPTS) await delay(closeBackoff(attempt))
   }
 
-  if (!closed) {
-    // Deliberately no refund. An open session plus refunded minutes is a free
-    // unlock; leaving the minutes spent is merely an overcharge, and the retry
-    // clears it.
-    errors.push(`the ${minutes} minutes stay spent until it is`)
-    return errors
-  }
-
-  const refunded = await swapAvailable(session.user_id, before - minutes, before).catch(() => false)
-  if (!refunded) errors.push(`the ${minutes} minutes could not be refunded`)
-
-  return errors
+  return { closed: false, attempts: CLOSE_ATTEMPTS, error }
 }
+

@@ -2,7 +2,7 @@ import { CONFIG } from './config.js'
 import { query, getSession } from './supabase.js'
 import { phaseAt, spendOpensAt, clockLabel, phaseSummary } from './schedule.js'
 import { randomQuote } from './quotes.js'
-import { readBalance, startSession, rollbackSession } from './spend.js'
+import { readBalance, startSession, closeRefusedSession } from './spend.js'
 import { isAlwaysAllowed } from './always-allowed.js'
 
 const params = new URLSearchParams(location.search)
@@ -234,7 +234,7 @@ function renderLengths(phase) {
     const button = document.createElement('button')
     button.className = 'length'
     button.type = 'button'
-    button.disabled = busy || balance === null || balance < minutes
+    button.disabled = busy || closing || balance === null || balance < minutes
     button.title = button.disabled && balance !== null && balance < minutes
       ? `Needs ${minutes} minutes, you have ${balance}.`
       : ''
@@ -273,8 +273,8 @@ let released = false
 let inFlight = false
 let autoNavigate = true
 let timer = null
-/** A paid tap that was refused and is still being undone. See settleRollback. */
-let pendingRollback = null
+/** True while a refused session is being closed — no new taps until it settles. */
+let closing = false
 
 async function markReleased() {
   const stored = await chrome.storage.local.get(MARKS_KEY)
@@ -335,39 +335,36 @@ async function dropRulesAndGo(reason) {
   try {
     reply = await chrome.runtime.sendMessage({ type: 'sync' })
   } catch (e) {
-    showError(`${reason}, but the background worker did not answer (${e.message}). Try again.`)
-    return { released: false, definite: false }
+    const message = `${reason}, but the background worker did not answer (${e.message}). Try again.`
+    showError(message)
+    return { released: false, definite: false, message }
   }
   if (!reply?.ok) {
     if (reply?.errorKind === 'rules') {
-      showError(
-        `${reason}, but the browser refused the block rules (${reply.error}), so ${domain} is still blocked.`,
-        { sticky: true },
-      )
-      return { released: false, definite: true }
+      const message = `${reason}, but the browser refused the block rules (${reply.error}), so ${domain} is still blocked.`
+      showError(message, { sticky: true })
+      return { released: false, definite: true, message }
     }
     // The check itself did not finish. The rules may well have been written; it
     // is not known either way, so nothing is undone on the strength of it.
-    showError(
-      `${reason}, but the background check did not finish (${reply?.error ?? 'no reply'}). Still trying.`,
-    )
-    return { released: false, definite: false }
+    const message = `${reason}, but the background check did not finish (${reply?.error ?? 'no reply'}). Still trying.`
+    showError(message)
+    return { released: false, definite: false, message }
   }
   if (!reply.unlocked?.[domain]) {
     if (reply.heldByGrace || reply.failures) {
-      showError(
+      const message =
         `${reason}, but the worker cannot reach Supabase to confirm it (${reply.failures} failed check(s)). ` +
-          'Holding — it will let you through as soon as one succeeds.',
-      )
-      return { released: false, definite: false }
+        'Holding — it will let you through as soon as one succeeds.'
+      showError(message)
+      return { released: false, definite: false, message }
     }
-    showError(`${reason}, but the worker still has ${domain} blocked. Reload the extension.`, {
-      sticky: true,
-    })
-    return { released: false, definite: true }
+    const message = `${reason}, but the worker still has ${domain} blocked. Reload the extension.`
+    showError(message, { sticky: true })
+    return { released: false, definite: true, message }
   }
   await navigateBack()
-  return { released: true, definite: false }
+  return { released: true, definite: false, message: '' }
 }
 
 /**
@@ -424,7 +421,7 @@ async function releaseIfUnlocked({ manual = false } = {}) {
  * heading.
  */
 async function pick(minutes) {
-  if (busy || released) return
+  if (busy || released || closing) return
   busy = true
   dismissError()
   renderWindow()
@@ -446,59 +443,38 @@ async function pick(minutes) {
   await clearMark()
 
   const result = await dropRulesAndGo('Session started')
+
   if (!result.released && result.definite) {
-    // Paid for, and definitively still blocked. Undo the tap rather than
-    // leaving minutes spent against a wall that did not move — the session
-    // clock would otherwise run down while the site stayed shut.
-    pendingRollback = started
-    await settleRollback()
+    // Paid for, and definitively still blocked. The minutes are NOT refunded —
+    // see closeRefusedSession for why that is deliberate. What is worth doing
+    // is closing the row, so this tap cannot unlock the site later on a write
+    // that does succeed. The message says what actually happened, including
+    // that the minutes are gone; blaming something else, or promising a refund
+    // that may not arrive, is worse than the honest version.
+    closing = true
+    renderWindow()
+    el('spend-hint').textContent = 'Closing the session that was refused…'
+
+    const outcome = await closeRefusedSession(started)
+    closing = false
+
+    showError(
+      outcome.closed
+        ? `${result.message} Your ${minutes} minutes are spent — the session has been closed so it cannot unlock anything later.`
+        : `${result.message} Your ${minutes} minutes are spent, and the session could not be closed after ${outcome.attempts} attempts (${outcome.error}); it will expire on its own within ${minutes} minutes.`,
+      { sticky: true },
+    )
   } else if (!result.released) {
-    // Paid for, not released, and not definite enough to undo — a check that
-    // did not finish, or a decision the worker is holding. The session stands
-    // and the page keeps trying, but the reason has to survive the next
-    // routine poll's clearError(): "you spent minutes and you are still here"
-    // is exactly the message that must not quietly vanish.
-    showError(el('error').textContent, { sticky: true })
+    // Not definite: a check that did not finish, or a decision the worker is
+    // holding. The session stands and the page keeps trying — but the reason
+    // must survive the next poll's clearError(). "You spent minutes and you are
+    // still here" is exactly the message that must not quietly vanish.
+    showError(result.message, { sticky: true })
   }
 
   await refreshBalance()
   busy = false
   if (!result.released) renderWindow()
-}
-
-/**
- * Finish undoing a paid tap that was refused, retrying until it takes.
- *
- * A rollback can half-fail — the close is attempted first and gates the refund,
- * so a failed close leaves the minutes spent on purpose rather than handing out
- * a free unlock. That is a state to get out of, not to leave: this runs again
- * on every poll while the page is open, so a blip that broke the close is
- * cleared by the next tick rather than costing the minutes for good. If the tab
- * goes away first the session simply expires on its own, which is the
- * conservative end of it.
- *
- * The reason for the refusal is already on screen from dropRulesAndGo; this
- * only adds what the undo could not finish.
- */
-async function settleRollback() {
-  if (!pendingRollback) return
-  const { minutes } = pendingRollback
-
-  let failures
-  try {
-    failures = await rollbackSession(pendingRollback)
-  } catch (e) {
-    failures = [`the undo could not be completed (${e.message})`]
-  }
-
-  const said = el('error').textContent.split(' Also, ')[0].split(' Your ')[0]
-  if (failures.length) {
-    showError(`${said} Also, ${failures.join(', and ')}. Retrying.`, { sticky: true })
-    return
-  }
-
-  pendingRollback = null
-  showError(`${said} Your ${minutes} minutes were not spent.`, { sticky: true })
 }
 
 async function refreshBalance() {
@@ -528,15 +504,12 @@ async function tick() {
   // pending timeout to fire later and start a second chain — every
   // hidden->visible toggle added one, multiplying the poll rate.
   stopPolling()
-  if (released || inFlight || busy) {
+  if (released || inFlight || busy || closing) {
     schedule()
     return
   }
   inFlight = true
   try {
-    // An unfinished undo comes first: until it lands, minutes are spent on a
-    // session that was refused.
-    await settleRollback()
     // The balance is re-read every tick so the buttons enable themselves the
     // moment a task is verified in the app, and the window is re-rendered so
     // 6:00pm turns this page from a wall into a menu without a reload.
@@ -558,7 +531,7 @@ document.addEventListener('visibilitychange', () => {
 })
 
 el('retry').addEventListener('click', async () => {
-  if (released || busy) return
+  if (released || busy || closing) return
   dismissError()
   el('note').textContent = 'Checking…'
   // An explicit press is the user overriding the anti-flap hold.

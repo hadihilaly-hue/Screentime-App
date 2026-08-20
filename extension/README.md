@@ -107,20 +107,30 @@ Only one step of that order is forced: the worker will not unlock a domain until
 a session row exists, so the insert has to come before the rules drop. Deducting
 *before* the insert is a choice, not a necessity — it is what stops a reload
 mid-start buying the same minutes twice — and the price of that choice is a
-window where the minutes are gone and the next step fails. Both failures in that
-window are undone rather than charged for:
+window where the minutes are gone and the next step fails.
 
-- **The insert is rejected** → the minutes are refunded.
-- **The rules write is refused, so the site stays blocked** → the session is
-  closed and the minutes refunded, and the block page says so instead of sending
-  you back into a wall it just charged you for. The close gates the refund: a
-  refunded session that is still open would hand back the minutes *and* unlock
-  the site on the next successful write, so if the close fails the minutes stay
-  spent and the undo is retried on the next check.
+**The policy in that window is deliberately one-sided: you may be overcharged,
+the site may never open for free.**
+
+- **The insert is rejected** → the minutes are refunded. Nothing exists yet, so
+  the undo is a single write. (The refund is a compare-and-swap and can itself
+  be refused if the balance moved; the page says so rather than pretending.)
+- **The rules write is refused, so the site stays blocked** → **the minutes stay
+  spent.** The session row is closed instead — retried up to five times with
+  backoff — so the tap cannot unlock the site later on a write that does
+  succeed. The block page says exactly that, including that the minutes are
+  gone.
+
+Losing minutes to a rejected rules write is rare, visible, and recoverable by
+finishing another task. A free unlock is none of those, and it is the one thing
+the schedule exists to prevent. Two earlier attempts to refund this case
+produced, in order, a free unlock and a retry loop that reported the wrong
+cause — so the refund is gone rather than repaired.
 
 A check that simply did not finish, or a decision the worker is holding through
-its grace window, undoes nothing — neither says the rules failed, and treating
-them as if they did cancelled sessions that were about to work.
+its grace window, changes nothing at all: the session stands and the page keeps
+trying. Neither says the rules failed, and treating them as if they did
+cancelled sessions that were about to work.
 
 Outside the spend window there is nothing to tap. `startSession` refuses on the
 clock as well, so even a page left open from 5:55pm cannot be clicked into a
