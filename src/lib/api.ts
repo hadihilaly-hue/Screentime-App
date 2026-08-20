@@ -26,26 +26,38 @@ export async function getConfig(userId: string): Promise<AppConfig> {
     .maybeSingle()
   if (error) throw new Error(error.message)
 
-  if (data) {
-    // The server derives "today" from this, so it has to track the device you
-    // actually carry. Moving countries updates it; moving your clock does not.
-    const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone
-    if (deviceZone && deviceZone !== data.timezone) {
-      await supabase.from('app_config').update({ timezone: deviceZone }).eq('user_id', userId)
-      return { ...(data as AppConfig), timezone: deviceZone }
-    }
-    return data as AppConfig
-  }
+  if (data) return syncTimezone(data as AppConfig)
 
   // The signup trigger normally creates this row; this is the fallback for an
   // account that predates it.
-  return unwrap(
-    supabase
-      .from('app_config')
-      .insert({ user_id: userId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
-      .select()
-      .single(),
-  ) as Promise<AppConfig>
+  const created = (await unwrap(
+    supabase.from('app_config').insert({ user_id: userId }).select().single(),
+  )) as AppConfig
+  return syncTimezone(created)
+}
+
+/**
+ * The server derives "today" from the stored timezone, so it has to track the
+ * device you actually carry — but it is not a column the browser may write. The
+ * RPC validates, logs the change, and returns the zone actually in effect: if
+ * the server's tzdata doesn't know the name (browsers can be newer), the old
+ * one stands and `timezoneMismatch` below goes true rather than the app
+ * pretending the write landed.
+ */
+async function syncTimezone(config: AppConfig): Promise<AppConfig> {
+  const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  if (!deviceZone || deviceZone === config.timezone) return config
+
+  const { data, error } = await supabase.rpc('set_timezone', { p_timezone: deviceZone })
+  if (error) throw new Error(error.message)
+  return { ...config, timezone: (data as string) ?? config.timezone }
+}
+
+/** True when the server could not adopt this device's timezone. Everything
+ *  date-keyed will fail while this is true, so it needs to be visible. */
+export function timezoneMismatch(config: AppConfig): string | null {
+  const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+  return deviceZone && deviceZone !== config.timezone ? deviceZone : null
 }
 
 export async function getDailyState(userId: string, date: string): Promise<DailyState | null> {
@@ -261,11 +273,6 @@ export async function weeklyObservation(
   return data
 }
 
-export async function updateConfig(userId: string, patch: Partial<AppConfig>): Promise<void> {
-  const { error } = await supabase.from('app_config').update(patch).eq('user_id', userId)
-  if (error) throw new Error(error.message)
-}
-
 export function minutesForTier(config: AppConfig, tier: Tier): number {
   return tier === 1 ? config.tier1_minutes : tier === 2 ? config.tier2_minutes : config.tier3_minutes
 }
@@ -298,6 +305,21 @@ export type CheatReport = {
   date: string
   count: number
   note: string | null
+}
+
+export async function getTimezoneChanges(
+  userId: string,
+  from: string,
+  to: string,
+): Promise<Array<{ from_zone: string; to_zone: string; created_at: string }>> {
+  return unwrap(
+    supabase
+      .from('timezone_changes')
+      .select('from_zone, to_zone, created_at')
+      .eq('user_id', userId)
+      .gte('created_at', `${from}T00:00:00Z`)
+      .lte('created_at', `${to}T23:59:59Z`),
+  ) as Promise<Array<{ from_zone: string; to_zone: string; created_at: string }>>
 }
 
 export async function getCheatReports(

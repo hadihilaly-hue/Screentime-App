@@ -107,6 +107,17 @@ Afterwards the client holds a column-level `UPDATE` grant on `title`, `tier` and
 `position` only. It cannot mark a task verified, award itself minutes, clear the
 late-addition flag, or rewrite what Claude suggested.
 
+The same reasoning applies to the other two tables the client can reach:
+
+- **`app_config`** — `UPDATE` is granted on `tier1_minutes`, `tier2_minutes`,
+  `tier3_minutes` and `daily_cap_minutes` only, because §3 says to tune those
+  after week 1. `timezone` decides what "today" is and `follow_up_rate` decides
+  how often §7's spot check fires; neither is a knob the browser turns.
+  `last_active_date` is written only by `require_today()`.
+- **`daily_state`** — read-only to the client. Confirmation goes through
+  `confirm_day()`. A writable `list_confirmed` would un-flag every late addition
+  *and* re-open the delete-before-confirm window in a single call.
+
 ## The "Skip AI" route
 
 §8.2 requires manual task entry with manual tier picking for Weekend 1, and the
@@ -139,11 +150,21 @@ for any real timezone). That was enough to bank: create a task dated tomorrow,
 credit it manually, and tomorrow started with a loaded balance — the exact thing
 §3 singles out ("banking lets you save up for a binge day").
 
-**Residual, stated plainly.** The timezone comes from your browser and the app
-writes it back whenever your device's zone changes, so someone determined can
-still change their device timezone, pre-load a day, and change it back. That is a
-deliberate two-step act, not a clock nudge, and it lands squarely in §7's list of
-things Phase 1 measures rather than prevents.
+**Days only run forwards.** `app_config.last_active_date` is a high-water mark:
+every write path refuses a date earlier than the latest one you have already
+acted on. That is what makes moving the timezone unprofitable rather than merely
+awkward. Jump your zone forward, load up tomorrow, jump back — and today is now
+behind the mark and closed for good. You can steal a day, once, by giving up the
+day you were standing on.
+
+Changing the timezone is also not a plain column write: `timezone` is outside the
+client's `UPDATE` grant, so it goes through `set_timezone()`, which validates the
+zone and appends to `timezone_changes`. The weekly review counts those. §7's
+enforcement is visibility, and moving what "today" means is a move on the ledger.
+
+**Residual, stated plainly.** A person willing to change zones, spend a day, and
+see the count on Sunday can still shift one day's earnings forward. Phase 1
+measures that rather than preventing it.
 
 ## Photo freshness has one hole
 

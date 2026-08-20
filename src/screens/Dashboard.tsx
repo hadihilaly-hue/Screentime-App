@@ -64,6 +64,18 @@ export function Dashboard({
           </div>
         </header>
 
+        {api.timezoneMismatch(config) && (
+          <Card className="border-amber-700">
+            <p className="text-sm text-amber-200">
+              This device says it's in{' '}
+              <span className="font-mono">{api.timezoneMismatch(config)}</span>, but the server
+              still has <span className="font-mono">{config.timezone}</span> and wouldn't take the
+              new one. Until that's sorted, anything date-keyed will fail — update the server's
+              timezone data, or set <code>app_config.timezone</code> by hand.
+            </p>
+          </Card>
+        )}
+
         {isSunday() && (
           <Link to="/weekly">
             <Card className="border-emerald-700">

@@ -90,12 +90,14 @@ update app_config set
   tier1_minutes = 20,
   tier2_minutes = 12,
   tier3_minutes = 5,
-  daily_cap_minutes = 60,
-  follow_up_rate = 0.25      -- the 1-in-4 random spot check
+  daily_cap_minutes = 60
 where user_id = auth.uid();
 ```
 
-No redeploy needed; the app reads these at load.
+No redeploy needed; the app reads these at load. `follow_up_rate` (the 1-in-4
+spot check) and `timezone` are deliberately outside what the app's own
+credentials can write — change those from the SQL editor, which runs as
+`postgres`, not from the browser.
 
 ## How the rules are actually enforced
 
@@ -109,12 +111,14 @@ enforced in Postgres:
 | No double credit for one task | `_credit_task` raises if the task is already verified |
 | No banking overnight | `balances` is keyed by date, and no task can be created, credited or spent on a date that isn't today |
 | A rolled-forward device clock does nothing | `user_today()` derives the date from `now()` and your stored IANA timezone; the client's date is checked against it, never trusted |
+| Days only run forwards | `require_today()` keeps a high-water mark, so a day you have left can never be re-entered — which is what makes jumping timezones cost more than it pays |
+| You can't turn off the spot check or move your own calendar | `follow_up_rate` and `timezone` are outside the client's column grant; timezone changes go through `set_timezone()` and are logged |
 | One session at a time, no overspend, 5/10/15/20 only | `start_session` locks the balance row |
 | Tasks can't be deleted after confirming | RLS `delete` policy checks `daily_state.list_confirmed` |
 | You can't self-declare a task verified, or un-flag a late addition | column-level `GRANT UPDATE (title, tier, position)` — those are the only columns the client can write |
 | You can't forge Claude's tier suggestion or a no-photo exemption | a trigger strips them from every client insert; only `create_structured_tasks` (service role) sets them |
 | Late additions are flagged by the server, not self-reported | `tasks_insert_guard` trigger reads `daily_state` |
-| Rejections, spot checks and overrides can't be erased | `verification_attempts` has no `delete` policy; `claude_suggested_tier` is not client-writable |
+| Rejections, spot checks and overrides can't be erased | `verification_attempts` has no `delete` policy; `claude_suggested_tier` is not client-writable; `daily_state` is read-only to the client, so the late-addition flag can't be un-set by un-confirming the day |
 | Photos must be fresh | `verify-proof` rejects a capture stamp older than 2 minutes |
 
 The one deliberate escape hatch is `credit_manual_task`, which the client *can*

@@ -11,6 +11,7 @@ type Loaded = {
   balances: Balance[]
   attempts: VerificationAttempt[]
   cheats: api.CheatReport[]
+  zoneChanges: Array<{ from_zone: string; to_zone: string; created_at: string }>
 }
 
 export function WeeklyReview({ userId }: { userId: string }) {
@@ -31,14 +32,15 @@ export function WeeklyReview({ userId }: { userId: string }) {
   useEffect(() => {
     void (async () => {
       try {
-        const [tasks, sessions, balances, attempts, cheats] = await Promise.all([
+        const [tasks, sessions, balances, attempts, cheats, zoneChanges] = await Promise.all([
           api.getRange<Task>('tasks', userId, from, to),
           api.getRange<Session>('sessions', userId, from, to),
           api.getRange<Balance>('balances', userId, from, to),
           api.getRange<VerificationAttempt>('verification_attempts', userId, from, to),
           api.getCheatReports(userId, from, to),
+          api.getTimezoneChanges(userId, from, to),
         ])
-        setData({ tasks, sessions, balances, attempts, cheats })
+        setData({ tasks, sessions, balances, attempts, cheats, zoneChanges })
       } catch (err) {
         setError((err as Error).message)
       }
@@ -47,7 +49,7 @@ export function WeeklyReview({ userId }: { userId: string }) {
 
   const stats = useMemo(() => {
     if (!data) return null
-    const { tasks, sessions, balances, attempts, cheats } = data
+    const { tasks, sessions, balances, attempts, cheats, zoneChanges } = data
     const verified = tasks.filter((t) => t.status === 'verified')
     // A MANUAL attempt means nothing was ever looked at — either the AI was down
     // or the task was self-report-only. Those still count as completed, but the
@@ -103,6 +105,7 @@ export function WeeklyReview({ userId }: { userId: string }) {
       spotChecks: attempts.filter((a) => a.verdict === 'FOLLOW_UP' && a.forced_follow_up).length,
       manualCredits: attempts.filter((a) => a.verdict === 'MANUAL').length,
       selfReportedCheats: cheats.reduce((n, c) => n + c.count, 0),
+      timezoneChanges: zoneChanges.length,
     }
   }, [data])
 
@@ -242,6 +245,10 @@ export function WeeklyReview({ userId }: { userId: string }) {
             <li className="flex justify-between">
               <span>Self-reported opens with no session</span>
               <span className="tabular-nums">{stats.selfReportedCheats}</span>
+            </li>
+            <li className="flex justify-between">
+              <span>Timezone changes (moves what "today" means)</span>
+              <span className="tabular-nums">{stats.timezoneChanges}</span>
             </li>
           </ul>
 

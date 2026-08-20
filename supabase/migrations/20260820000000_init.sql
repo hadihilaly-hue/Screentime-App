@@ -25,6 +25,9 @@ create table app_config (
   -- than trusting a date the client sends, which is what stops a rolled-forward
   -- clock from minting a second daily cap or pre-loading tomorrow's balance.
   timezone           text not null default 'UTC',
+  -- High-water mark: the latest date this account has ever acted on. Days only
+  -- move forward. See require_today() for why that matters.
+  last_active_date   date,
   created_at         timestamptz not null default now()
 );
 
@@ -120,6 +123,20 @@ create table sessions (
 create index sessions_user_date_idx on sessions (user_id, date);
 
 -- ---------------------------------------------------------------------------
+-- timezone_changes — the stored timezone decides what "today" is, so moving it
+-- is a move on the ledger. Append-only, and surfaced in the weekly review.
+-- ---------------------------------------------------------------------------
+create table timezone_changes (
+  id         uuid primary key default gen_random_uuid(),
+  user_id    uuid not null references auth.users (id) on delete cascade,
+  from_zone  text not null,
+  to_zone    text not null,
+  created_at timestamptz not null default now()
+);
+
+create index timezone_changes_user_idx on timezone_changes (user_id, created_at);
+
+-- ---------------------------------------------------------------------------
 -- cheat_reports — the honest half of Phase 1. Enforcement is honour-system, so
 -- the only way to measure the cheat rate is to write it down. One row per day.
 -- ---------------------------------------------------------------------------
@@ -142,6 +159,7 @@ alter table verification_attempts enable row level security;
 alter table balances              enable row level security;
 alter table sessions              enable row level security;
 alter table cheat_reports         enable row level security;
+alter table timezone_changes      enable row level security;
 
 create policy "own config" on app_config
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
@@ -184,6 +202,9 @@ create policy "read own balances" on balances
 create policy "read own sessions" on sessions
   for select using (auth.uid() = user_id);
 
+create policy "read own timezone changes" on timezone_changes
+  for select using (auth.uid() = user_id);
+
 create policy "own cheat reports" on cheat_reports
   for all using (auth.uid() = user_id) with check (auth.uid() = user_id);
 
@@ -220,14 +241,67 @@ begin
 end;
 $$;
 
-create function assert_user_today(p_user_id uuid, p_date date) returns void
-language plpgsql stable security definer set search_path = public as $$
+-- Two rules, both enforced here because every write path goes through it:
+--   1. the date must be today in your stored timezone;
+--   2. days only move forward — you can never act on a date earlier than the
+--      latest one you have already acted on.
+--
+-- Rule 2 is what makes moving the timezone unprofitable. Jumping the clock zone
+-- forward to load up tomorrow works exactly once, and costs you the rest of
+-- today: on the way back, today is behind the high-water mark and is closed.
+create function require_today(p_user_id uuid, p_date date) returns void
+language plpgsql security definer set search_path = public as $$
 declare
   today date := user_today(p_user_id);
+  hwm   date;
 begin
   if p_date is null or p_date <> today then
     raise exception 'date % is not today (% in your timezone)', p_date, today;
   end if;
+
+  select last_active_date into hwm from app_config where user_id = p_user_id;
+  if hwm is not null and p_date < hwm then
+    raise exception
+      'you have already moved past % (last active %). Days do not run backwards.',
+      p_date, hwm;
+  end if;
+
+  if hwm is null or p_date > hwm then
+    update app_config set last_active_date = p_date where user_id = p_user_id;
+  end if;
+end;
+$$;
+
+-- Changing your timezone changes what "today" means, so it goes through here:
+-- validated, logged, and never silently ignored. Returns the zone actually in
+-- effect — if the server's tzdata doesn't know the name (a browser can be
+-- newer), the old one stands and the caller can see that it did.
+create function set_timezone(p_timezone text) returns text
+language plpgsql security definer set search_path = public as $$
+declare
+  current_zone text;
+begin
+  if auth.uid() is null then
+    raise exception 'not authenticated';
+  end if;
+
+  select timezone into current_zone from app_config where user_id = auth.uid();
+  if current_zone is null then
+    raise exception 'no config row';
+  end if;
+
+  if p_timezone is null or p_timezone = current_zone then
+    return current_zone;
+  end if;
+  if not exists (select 1 from pg_timezone_names where name = p_timezone) then
+    return current_zone;
+  end if;
+
+  update app_config set timezone = p_timezone where user_id = auth.uid();
+  insert into timezone_changes (user_id, from_zone, to_zone)
+  values (auth.uid(), current_zone, p_timezone);
+
+  return p_timezone;
 end;
 $$;
 
@@ -280,7 +354,7 @@ language plpgsql security definer set search_path = public as $$
 begin
   -- No dating a task into the future: that plus credit_manual_task would
   -- pre-load tomorrow's balance, which is the banking §3 forbids.
-  perform assert_user_today(new.user_id, new.date);
+  perform require_today(new.user_id, new.date);
 
   new.created_after_confirmation := coalesce(
     (select d.list_confirmed from daily_state d
@@ -385,7 +459,7 @@ begin
     raise exception 'task already verified';
   end if;
 
-  perform assert_user_today(p_user_id, t.date);
+  perform require_today(p_user_id, t.date);
 
   cfg := ensure_config(p_user_id);
   full_value := tier_minutes(p_user_id, t.tier);
@@ -534,7 +608,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  perform assert_user_today(auth.uid(), p_date);
+  perform require_today(auth.uid(), p_date);
 
   if p_minutes not in (5, 10, 15, 20) then
     raise exception 'sessions are 5, 10, 15 or 20 minutes';
@@ -601,7 +675,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  perform assert_user_today(auth.uid(), p_date);
+  perform require_today(auth.uid(), p_date);
 
   select count(*) into n from tasks where user_id = auth.uid() and date = p_date;
   if n = 0 then
@@ -627,8 +701,16 @@ $$;
 -- ---------------------------------------------------------------------------
 grant usage on schema public to anon, authenticated;
 
-grant select, insert, update           on app_config     to authenticated;
-grant select, insert, update           on daily_state    to authenticated;
+-- app_config: only the economy's tuning numbers. §3 says to tune those after
+-- week 1. `timezone` decides what "today" is and `follow_up_rate` decides how
+-- often §7's spot check fires — neither is a knob the browser gets to turn.
+grant select, insert                   on app_config     to authenticated;
+grant update (tier1_minutes, tier2_minutes, tier3_minutes, daily_cap_minutes)
+                                       on app_config     to authenticated;
+-- daily_state is written only by confirm_day(). The client just reads it — and
+-- a writable list_confirmed would un-flag late additions and re-open the
+-- delete-before-confirm window in one call.
+grant select                           on daily_state    to authenticated;
 grant select, insert, delete            on tasks          to authenticated;
 -- Column-level: the client may rename, re-tier and reorder a task. It may NOT
 -- touch status, minutes_awarded, claude_suggested_tier, created_after_confirmation
@@ -639,6 +721,7 @@ grant select, insert, update           on cheat_reports  to authenticated;
 grant select                           on balances       to authenticated;
 grant select                           on sessions       to authenticated;
 grant select                           on verification_attempts to authenticated;
+grant select                           on timezone_changes to authenticated;
 
 -- The client may only call the functions meant for it.
 
@@ -649,13 +732,14 @@ revoke all on function create_structured_tasks(uuid, date, jsonb) from public, a
 revoke all on function log_verification_attempt(uuid, verification_verdict, text, text, text, text[], boolean) from public, anon, authenticated;
 revoke all on function ensure_config(uuid) from public, anon, authenticated;
 revoke all on function tier_minutes(uuid, int) from public, anon, authenticated;
-revoke all on function assert_user_today(uuid, date) from public, anon, authenticated;
+revoke all on function require_today(uuid, date) from public, anon, authenticated;
 revoke all on function user_today(uuid) from public, anon, authenticated;
 
 grant execute on function credit_manual_task(uuid, text) to authenticated;
 grant execute on function start_session(date, text, int) to authenticated;
 grant execute on function end_session(uuid) to authenticated;
 grant execute on function confirm_day(date, text) to authenticated;
+grant execute on function set_timezone(text) to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Storage — private bucket for proof photos, foldered by user id.
