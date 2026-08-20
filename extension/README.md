@@ -41,10 +41,18 @@ After any edit to `config.js`, hit **Reload** on the extension card.
   youtube.com itself**, so a YouTube embed on someone else's blog still plays.
 - Subdomains are covered (`requestDomains` matches the domain and everything
   under it).
-- Every minute, and again at the exact moment a running session ends, the
-  extension asks Supabase for sessions with `ended_at` null whose
-  `started_at + minutes` is still in the future. Sites with such a session have
-  their rules removed; everything else stays blocked.
+- Every minute, and again shortly after a running session ends, the extension
+  asks Supabase for sessions with `ended_at` null whose `started_at + minutes`
+  is still in the future. Sites with such a session have their rules removed;
+  everything else stays blocked.
+- The block page does not wait for that poll. On load, and every 5 seconds
+  while it is open, it checks Supabase itself for a session covering this site.
+  If it finds one it has the worker drop the rules first, then sends you on to
+  the URL you originally asked for — so starting a session in the app releases
+  a block page that is already open, without touching it.
+- The URL you were heading to rides along in the block page's fragment, so an
+  unlock returns you to that exact page rather than the site's front door.
+- The popup's **Re-check now** forces the same immediate re-check.
 - When a site goes back to blocked, tabs already sitting on it are redirected
   too — you do not have to reload for the block to come back.
 - **It fails closed.** Signed out, offline, or Supabase erroring, everything
@@ -68,6 +76,7 @@ a site here is the only step.
 ## Limits
 
 - Chrome only (Manifest V3). No Firefox/Safari build.
-- A session that starts while you are already staring at a blocked page needs a
-  reload, or up to a minute for the next poll, before the site opens.
+- A session started elsewhere takes up to 5 seconds to release an open block
+  page, or up to a minute for a tab that is not on one. **Re-check now** in the
+  popup, or the button on the block page, skips the wait.
 - The clock comes from your machine, same as the web app.

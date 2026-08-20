@@ -11,8 +11,15 @@ const RULE_BASE = 1000
 const POLL_ALARM = 'et-poll'
 const EXPIRY_ALARM = 'et-expiry'
 
-function blockedPath(site) {
-  return `/blocked.html?site=${encodeURIComponent(site.domain)}`
+/**
+ * The block page URL. The originally requested URL rides along in the
+ * fragment, not a query parameter: a fragment is never sent with the request,
+ * so DNR's \0 substitution can never contain one, which means everything after
+ * "#from=" is unambiguously the original URL even when it has its own ? and &.
+ */
+function blockedUrl(site, originalUrl) {
+  const base = `${chrome.runtime.getURL('blocked.html')}?site=${encodeURIComponent(site.domain)}`
+  return originalUrl ? `${base}#from=${originalUrl}` : base
 }
 
 /** Two rule ids are reserved per site so the sub_frame rule has a stable id. */
@@ -22,7 +29,10 @@ function ruleIds(index) {
 
 function rulesFor(site, index) {
   const [mainId, frameId] = ruleIds(index)
-  const redirect = { extensionPath: blockedPath(site) }
+  // regexSubstitution rather than extensionPath, so \0 (the whole requested
+  // URL) can be carried through to the block page and returned to on unlock.
+  const redirect = { regexSubstitution: `${blockedUrl(site)}#from=\\0` }
+  const matchAll = '^.*$'
 
   // requestDomains matches the domain and all of its subdomains.
   const rules = [
@@ -30,7 +40,11 @@ function rulesFor(site, index) {
       id: mainId,
       priority: 1,
       action: { type: 'redirect', redirect },
-      condition: { requestDomains: [site.domain], resourceTypes: ['main_frame'] },
+      condition: {
+        requestDomains: [site.domain],
+        resourceTypes: ['main_frame'],
+        regexFilter: matchAll,
+      },
     },
   ]
 
@@ -45,6 +59,7 @@ function rulesFor(site, index) {
         requestDomains: [site.domain],
         initiatorDomains: [site.domain],
         resourceTypes: ['sub_frame'],
+        regexFilter: matchAll,
       },
     })
   }
@@ -80,9 +95,8 @@ async function evictOpenTabs(domain) {
   const tabs = await chrome.tabs.query({ url: [`*://${domain}/*`, `*://*.${domain}/*`] })
   const site = CONFIG.sites.find((s) => s.domain === domain)
   for (const tab of tabs) {
-    if (tab.id !== undefined) {
-      chrome.tabs.update(tab.id, { url: chrome.runtime.getURL(blockedPath(site)) })
-    }
+    // Carry the URL the tab was on, so restarting a session returns you to it.
+    if (tab.id !== undefined) await chrome.tabs.update(tab.id, { url: blockedUrl(site, tab.url) })
   }
 }
 
@@ -146,8 +160,14 @@ chrome.alarms.onAlarm.addListener(() => sync())
 // The popup asks for an immediate re-check after signing in or out.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'sync') {
+    // The block page and the popup both use this to force a re-check on demand
+    // instead of waiting out the poll interval. The reply carries which domains
+    // are unlocked, so the caller knows whether it is safe to navigate back.
     sync().then(
-      () => sendResponse({ ok: true }),
+      async () => {
+        const { et_status: status } = await chrome.storage.local.get('et_status')
+        sendResponse({ ok: true, unlocked: status?.unlocked ?? {} })
+      },
       (e) => sendResponse({ ok: false, error: String(e) }),
     )
     return true

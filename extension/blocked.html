@@ -22,6 +22,20 @@
       .label { color: #9ca3af; margin: 0; }
       a { color: #fff; }
       .muted { color: #9ca3af; font-size: 0.875rem; margin-top: 2rem; }
+      .dest {
+        color: #6b7280;
+        font-size: 0.875rem;
+        margin-top: 1.5rem;
+        word-break: break-all;
+      }
+      button {
+        font: inherit;
+        padding: 0.5rem 0.75rem;
+        background: transparent;
+        color: #fff;
+        border: 1px solid #4b5563;
+        cursor: pointer;
+      }
     </style>
   </head>
   <body>
@@ -32,7 +46,12 @@
       <p class="balance" id="balance">—</p>
       <p class="label" id="balance-label">minutes available</p>
 
-      <p style="margin-top: 2rem"><a id="dashboard" href="#">Go to the dashboard →</a></p>
+      <p class="dest" id="destination" hidden></p>
+
+      <p style="margin-top: 2rem">
+        <a id="dashboard" href="#">Go to the dashboard →</a>
+      </p>
+      <p><button id="retry">I started a session — let me through</button></p>
       <p class="muted" id="note"></p>
     </main>
     <script type="module" src="blocked.js"></script>
