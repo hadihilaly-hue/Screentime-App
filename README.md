@@ -107,11 +107,12 @@ enforced in Postgres:
 | Minutes can only be created by a verified proof | `credit_verified_task`, service-role only — the client is denied `EXECUTE` |
 | Daily cap of 60 earned minutes | `_credit_task`, applied inside the same transaction that verifies |
 | No double credit for one task | `_credit_task` raises if the task is already verified |
-| No banking overnight | `balances` is keyed by date; tomorrow is a different row |
-| A rolled-forward clock can't mint a second daily cap | `assert_plausible_date` rejects a date more than a day off server UTC |
+| No banking overnight | `balances` is keyed by date, and no task can be created, credited or spent on a date that isn't today |
+| A rolled-forward device clock does nothing | `user_today()` derives the date from `now()` and your stored IANA timezone; the client's date is checked against it, never trusted |
 | One session at a time, no overspend, 5/10/15/20 only | `start_session` locks the balance row |
 | Tasks can't be deleted after confirming | RLS `delete` policy checks `daily_state.list_confirmed` |
 | You can't self-declare a task verified, or un-flag a late addition | column-level `GRANT UPDATE (title, tier, position)` — those are the only columns the client can write |
+| You can't forge Claude's tier suggestion or a no-photo exemption | a trigger strips them from every client insert; only `create_structured_tasks` (service role) sets them |
 | Late additions are flagged by the server, not self-reported | `tasks_insert_guard` trigger reads `daily_state` |
 | Rejections, spot checks and overrides can't be erased | `verification_attempts` has no `delete` policy; `claude_suggested_tier` is not client-writable |
 | Photos must be fresh | `verify-proof` rejects a capture stamp older than 2 minutes |
@@ -146,5 +147,7 @@ supabase/
   `started_at + minutes`, so backgrounding the app or reloading it doesn't hand
   you free minutes.
 - **Capture time on the fallback path is the file's own mtime.** Picking a photo
-  from last Tuesday fails the 2-minute window instead of quietly passing.
+  from last Tuesday fails the 2-minute window instead of quietly passing. If a
+  file reports no mtime at all the code falls back to "now" — see
+  `docs/deviations-from-spec.md` for why, and why that's a hole.
 - Ship ugly. Tailwind defaults, no animations, one accent colour, one palette.

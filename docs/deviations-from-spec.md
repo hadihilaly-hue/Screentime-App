@@ -91,6 +91,22 @@ weekly review shows the completion rate **and**, whenever they differ, the share
 that was actually verified from a photo — plus a count of credits granted without
 anyone looking at evidence.
 
+## Who may write which columns
+
+§3's override log and §6a's "no photo needed" exemption are only worth anything
+if the browser can't author them. Two paths create tasks:
+
+- `create_structured_tasks` — service-role only, called by `structure-tasks` with
+  what Claude returned. The only path that may set `claude_suggested_tier`,
+  `proof_hint` or `self_report_only`.
+- a plain client `INSERT` — a task you typed yourself. A trigger strips those
+  three columns unconditionally, so a hand-added task is always self-tiered and
+  always needs a photo.
+
+Afterwards the client holds a column-level `UPDATE` grant on `title`, `tier` and
+`position` only. It cannot mark a task verified, award itself minutes, clear the
+late-addition flag, or rewrite what Claude suggested.
+
 ## The "Skip AI" route
 
 §8.2 requires manual task entry with manual tier picking for Weekend 1, and the
@@ -112,7 +128,29 @@ route, manual tier picking and `credit_manual_task` cover the whole loop.
 ## Midnight reset
 
 §8.4 offers a scheduled function or client-side date keying, and names the latter
-as simpler. Client-side it is — every row is keyed to the device-local date. The
-server doesn't know your timezone, but it does refuse any date more than a day
-either side of its own UTC date, so a device an ocean away still works and a
-clock rolled forward a week does not mint a second daily cap.
+as simpler. There is still no scheduler — every row is keyed to a calendar date
+and tomorrow is simply a different key — but the *date itself* is computed
+server-side from `now()` and the IANA timezone stored on your `app_config` row,
+not taken from whatever the device claims. `confirm_day`, `start_session`, task
+insertion and `_credit_task` all reject any date that isn't your today.
+
+An earlier version trusted the client's date within a ±1 day window (wide enough
+for any real timezone). That was enough to bank: create a task dated tomorrow,
+credit it manually, and tomorrow started with a loaded balance — the exact thing
+§3 singles out ("banking lets you save up for a binge day").
+
+**Residual, stated plainly.** The timezone comes from your browser and the app
+writes it back whenever your device's zone changes, so someone determined can
+still change their device timezone, pre-load a day, and change it back. That is a
+deliberate two-step act, not a clock nudge, and it lands squarely in §7's list of
+things Phase 1 measures rather than prevents.
+
+## Photo freshness has one hole
+
+§7's guard rejects a capture stamp older than 2 minutes. On the live-camera path
+the stamp is the moment of capture and is exact. On the file-input fallback it is
+the file's own mtime — so picking last Tuesday's photo out of the library fails,
+which is the point. But if a file reports no mtime at all (`lastModified === 0`),
+`src/components/CameraCapture.tsx` falls back to "now", because a freshly taken
+photo on such a browser would otherwise be unsubmittable. No current mobile
+browser does this; it is a hole all the same.

@@ -98,7 +98,9 @@ export function WeeklyReview({ userId }: { userId: string }) {
       lateAdditions: tasks.filter((t) => t.created_after_confirmation).map((t) => t.title),
       rejections: attempts.filter((a) => a.verdict === 'REJECTED').length,
       followUps: attempts.filter((a) => a.verdict === 'FOLLOW_UP').length,
-      spotChecks: attempts.filter((a) => a.forced_follow_up).length,
+      // The flag is carried onto the terminal VERIFIED/REJECTED row too, so
+      // count the question rows only — one spot check is one question asked.
+      spotChecks: attempts.filter((a) => a.verdict === 'FOLLOW_UP' && a.forced_follow_up).length,
       manualCredits: attempts.filter((a) => a.verdict === 'MANUAL').length,
       selfReportedCheats: cheats.reduce((n, c) => n + c.count, 0),
     }

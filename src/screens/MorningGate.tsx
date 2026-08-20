@@ -11,11 +11,9 @@ export const transcriptKey = (date: string) => `scrip:transcript:${date}`
  * so this screen has exactly one exit: produce some tasks.
  */
 export function MorningGate({
-  userId,
   date,
   onDone,
 }: {
-  userId: string
   date: string
   onDone: () => Promise<void>
 }) {
@@ -34,8 +32,7 @@ export function MorningGate({
     try {
       speech.stop()
       localStorage.setItem(transcriptKey(date), text)
-      const drafts = await api.structureTasks(text)
-      await api.insertTasks(userId, date, drafts)
+      await api.structureTasks(text, date)
       await onDone()
       navigate('/review')
     } catch (err) {

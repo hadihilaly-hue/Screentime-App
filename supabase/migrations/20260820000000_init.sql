@@ -21,6 +21,10 @@ create table app_config (
   tier3_minutes      int not null default 5  check (tier3_minutes between 0 and 240),
   daily_cap_minutes  int not null default 60 check (daily_cap_minutes between 0 and 1440),
   follow_up_rate     numeric not null default 0.25 check (follow_up_rate between 0 and 1),
+  -- Your device's IANA timezone. The server derives "today" from this rather
+  -- than trusting a date the client sends, which is what stops a rolled-forward
+  -- clock from minting a second daily cap or pre-loading tomorrow's balance.
+  timezone           text not null default 'UTC',
   created_at         timestamptz not null default now()
 );
 
@@ -202,19 +206,45 @@ create trigger on_auth_user_created
 -- Helpers
 -- ---------------------------------------------------------------------------
 
--- The client supplies its own local calendar date (that is the whole midnight
--- reset — see the header). The server cannot know the device's timezone, but it
--- can refuse anything more than a day either side of its own UTC date, which is
--- the difference between "I'm in Auckland" and "I set my clock to next week to
--- get another 60 minutes".
-create function assert_plausible_date(p_date date) returns void
-language plpgsql immutable as $$
+-- "Today" is computed from the server clock and the user's stored timezone, not
+-- from a date the client hands over. Rolling the device clock forward changes
+-- nothing here; §3's "unused minutes expire at midnight, no banking" is only a
+-- rule if the server owns the calendar.
+create function user_today(p_user_id uuid) returns date
+language plpgsql stable security definer set search_path = public as $$
+declare
+  tz text;
 begin
-  if p_date is null or p_date < current_date - 1 or p_date > current_date + 1 then
-    raise exception 'date % is not within a day of the server date', p_date;
+  select timezone into tz from app_config where user_id = p_user_id;
+  return (now() at time zone coalesce(tz, 'UTC'))::date;
+end;
+$$;
+
+create function assert_user_today(p_user_id uuid, p_date date) returns void
+language plpgsql stable security definer set search_path = public as $$
+declare
+  today date := user_today(p_user_id);
+begin
+  if p_date is null or p_date <> today then
+    raise exception 'date % is not today (% in your timezone)', p_date, today;
   end if;
 end;
 $$;
+
+-- A nonsense timezone would make every date check throw, so reject it up front.
+create function validate_timezone() returns trigger
+language plpgsql as $$
+begin
+  if not exists (select 1 from pg_timezone_names where name = new.timezone) then
+    raise exception '% is not a known timezone', new.timezone;
+  end if;
+  return new;
+end;
+$$;
+
+create trigger app_config_timezone_trg
+  before insert or update of timezone on app_config
+  for each row execute function validate_timezone();
 
 create function ensure_config(p_user_id uuid) returns app_config
 language plpgsql security definer set search_path = public as $$
@@ -248,6 +278,10 @@ $$;
 create function tasks_insert_guard() returns trigger
 language plpgsql security definer set search_path = public as $$
 begin
+  -- No dating a task into the future: that plus credit_manual_task would
+  -- pre-load tomorrow's balance, which is the banking §3 forbids.
+  perform assert_user_today(new.user_id, new.date);
+
   new.created_after_confirmation := coalesce(
     (select d.list_confirmed from daily_state d
       where d.user_id = new.user_id and d.date = new.date),
@@ -259,6 +293,15 @@ begin
   new.verification_notes := null;
   new.follow_up_question := null;
   new.follow_up_answer   := null;
+
+  -- Nothing inserted through this path carries a Claude suggestion, a proof
+  -- hint or a no-photo exemption — including inserts by the service role. Only
+  -- create_structured_tasks() below sets those, after the row exists, so there
+  -- is no caller-sniffing to get wrong.
+  new.claude_suggested_tier := null;
+  new.self_report_only      := false;
+  new.proof_hint            := null;
+
   return new;
 end;
 $$;
@@ -266,6 +309,50 @@ $$;
 create trigger tasks_insert_guard_trg
   before insert on tasks
   for each row execute function tasks_insert_guard();
+
+-- ---------------------------------------------------------------------------
+-- create_structured_tasks — the only way a task acquires a Claude suggestion,
+-- a proof hint, or a no-photo-needed exemption. Service-role only; called by
+-- the structure-tasks Edge Function with what Claude actually returned.
+-- ---------------------------------------------------------------------------
+create function create_structured_tasks(p_user_id uuid, p_date date, p_tasks jsonb)
+returns setof tasks
+language plpgsql security definer set search_path = public as $$
+declare
+  item     jsonb;
+  new_id   uuid;
+  idx      int := 0;
+  base_pos int;
+begin
+  select coalesce(max(position) + 1, 0) into base_pos
+  from tasks where user_id = p_user_id and date = p_date;
+
+  for item in select * from jsonb_array_elements(p_tasks) loop
+    insert into tasks (user_id, date, title, tier, position)
+    values (
+      p_user_id,
+      p_date,
+      left(trim(item ->> 'title'), 200),
+      (item ->> 'tier')::int,
+      base_pos + idx
+    )
+    returning id into new_id;
+
+    -- Set after insert: the guard trigger deliberately strips these on the way in.
+    update tasks set
+      claude_suggested_tier = (item ->> 'tier')::int,
+      proof_hint            = item ->> 'proof_hint',
+      self_report_only      = coalesce((item ->> 'self_report_only')::boolean, false)
+    where id = new_id;
+
+    idx := idx + 1;
+  end loop;
+
+  return query select * from tasks
+    where user_id = p_user_id and date = p_date and position >= base_pos
+    order by position;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- _credit_task — the only path by which minutes are created.
@@ -297,6 +384,8 @@ begin
   if t.status = 'verified' then
     raise exception 'task already verified';
   end if;
+
+  perform assert_user_today(p_user_id, t.date);
 
   cfg := ensure_config(p_user_id);
   full_value := tier_minutes(p_user_id, t.tier);
@@ -445,7 +534,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  perform assert_plausible_date(p_date);
+  perform assert_user_today(auth.uid(), p_date);
 
   if p_minutes not in (5, 10, 15, 20) then
     raise exception 'sessions are 5, 10, 15 or 20 minutes';
@@ -512,7 +601,7 @@ begin
   if auth.uid() is null then
     raise exception 'not authenticated';
   end if;
-  perform assert_plausible_date(p_date);
+  perform assert_user_today(auth.uid(), p_date);
 
   select count(*) into n from tasks where user_id = auth.uid() and date = p_date;
   if n = 0 then
@@ -556,10 +645,12 @@ grant select                           on verification_attempts to authenticated
 revoke all on function _credit_task(uuid, uuid, verification_verdict, text, text[], boolean) from public, anon, authenticated;
 revoke all on function credit_verified_task(uuid, text, text[], boolean) from public, anon, authenticated;
 revoke all on function credit_self_reported_task(uuid, text) from public, anon, authenticated;
+revoke all on function create_structured_tasks(uuid, date, jsonb) from public, anon, authenticated;
 revoke all on function log_verification_attempt(uuid, verification_verdict, text, text, text, text[], boolean) from public, anon, authenticated;
 revoke all on function ensure_config(uuid) from public, anon, authenticated;
 revoke all on function tier_minutes(uuid, int) from public, anon, authenticated;
-revoke all on function assert_plausible_date(date) from public, anon, authenticated;
+revoke all on function assert_user_today(uuid, date) from public, anon, authenticated;
+revoke all on function user_today(uuid) from public, anon, authenticated;
 
 grant execute on function credit_manual_task(uuid, text) to authenticated;
 grant execute on function start_session(date, text, int) to authenticated;

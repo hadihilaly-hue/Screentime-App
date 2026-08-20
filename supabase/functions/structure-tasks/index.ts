@@ -1,4 +1,4 @@
-import { anthropic, MODEL, parseJson, requireUser, textOf } from '../_shared/clients.ts'
+import { adminClient, anthropic, MODEL, parseJson, requireUser, textOf } from '../_shared/clients.ts'
 import { corsHeaders, fail, json } from '../_shared/cors.ts'
 
 const SYSTEM = `You convert a student's spoken morning ramble into a structured task list.
@@ -41,9 +41,12 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
 
   try {
-    await requireUser(req)
+    const user = await requireUser(req)
 
-    const { transcript } = await req.json()
+    const { transcript, date } = await req.json()
+    if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+      return fail('Missing date.')
+    }
     if (typeof transcript !== 'string' || transcript.trim().length < 3) {
       return fail('Give me a sentence or two about your day first.')
     }
@@ -61,14 +64,25 @@ Deno.serve(async (req) => {
     if (!tasks?.length) {
       return fail("Couldn't find any tasks in that. Try naming them one by one.")
     }
-    return json({
-      tasks: tasks.map((t) => ({
+
+    // Created here rather than handed back for the client to insert.
+    // claude_suggested_tier is the entire basis of the override log, and
+    // self_report_only unlocks crediting without a photo, so this RPC — service
+    // role only — is the one path in the system that may write either.
+    const db = adminClient()
+    const { data: inserted, error } = await db.rpc('create_structured_tasks', {
+      p_user_id: user.id,
+      p_date: date,
+      p_tasks: tasks.slice(0, 20).map((t) => ({
         title: t.title.slice(0, 200),
         tier: t.tier,
         proof_hint: t.proof_hint,
         self_report_only: /self-?report/i.test(t.proof_hint),
       })),
     })
+
+    if (error) return fail(error.message)
+    return json({ tasks: inserted })
   } catch (err) {
     if (err instanceof Response) return fail(await err.text(), err.status)
     console.error('structure-tasks failed', err)

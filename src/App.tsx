@@ -57,9 +57,7 @@ export default function App() {
       ? 'gate'
       : 'review'
 
-  const gate = (
-    <MorningGate userId={user.id} date={day.date} onDone={day.refresh} />
-  )
+  const gate = <MorningGate date={day.date} onDone={day.refresh} />
   const review = (
     <TaskReview
       userId={user.id}

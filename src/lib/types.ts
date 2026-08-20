@@ -9,6 +9,7 @@ export type AppConfig = {
   tier3_minutes: number
   daily_cap_minutes: number
   follow_up_rate: number
+  timezone: string
 }
 
 export type DailyState = {
@@ -73,16 +74,6 @@ export type VerificationAttempt = {
   proof_urls: string[]
   forced_follow_up: boolean
   created_at: string
-}
-
-/** A task as Claude proposes it, before you have confirmed anything. */
-export type DraftTask = {
-  title: string
-  tier: Tier
-  proof_hint: string
-  self_report_only: boolean
-  /** null for a task you typed in yourself — there was no suggestion to override. */
-  claude_suggested_tier: Tier | null
 }
 
 export type VerifyResponse = {

@@ -3,7 +3,6 @@ import type {
   AppConfig,
   Balance,
   DailyState,
-  DraftTask,
   Session,
   Task,
   Tier,
@@ -26,12 +25,26 @@ export async function getConfig(userId: string): Promise<AppConfig> {
     .eq('user_id', userId)
     .maybeSingle()
   if (error) throw new Error(error.message)
-  if (data) return data as AppConfig
+
+  if (data) {
+    // The server derives "today" from this, so it has to track the device you
+    // actually carry. Moving countries updates it; moving your clock does not.
+    const deviceZone = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (deviceZone && deviceZone !== data.timezone) {
+      await supabase.from('app_config').update({ timezone: deviceZone }).eq('user_id', userId)
+      return { ...(data as AppConfig), timezone: deviceZone }
+    }
+    return data as AppConfig
+  }
 
   // The signup trigger normally creates this row; this is the fallback for an
   // account that predates it.
   return unwrap(
-    supabase.from('app_config').insert({ user_id: userId }).select().single(),
+    supabase
+      .from('app_config')
+      .insert({ user_id: userId, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone })
+      .select()
+      .single(),
   ) as Promise<AppConfig>
 }
 
@@ -95,39 +108,38 @@ export async function getRange<T>(
 
 // --- morning gate ----------------------------------------------------------
 
-export async function structureTasks(transcript: string): Promise<DraftTask[]> {
+/**
+ * Creates today's tasks from the raw ramble and returns them. The Edge Function
+ * does the insert with the service role — `claude_suggested_tier` is the entire
+ * basis of the override log, so the browser is never the one to write it.
+ */
+export async function structureTasks(transcript: string, date: string): Promise<Task[]> {
   const { data, error } = await supabase.functions.invoke('structure-tasks', {
-    body: { transcript },
+    body: { transcript, date },
   })
   if (error) throw new Error(await readFunctionError(error, 'Could not structure that list.'))
-  return (data.tasks as Omit<DraftTask, 'claude_suggested_tier'>[]).map((t) => ({
-    ...t,
-    claude_suggested_tier: t.tier,
-  }))
+  return data.tasks as Task[]
 }
 
 /**
- * `created_after_confirmation` is deliberately NOT sent: a database trigger
- * derives it from daily_state. The flag exists to make late additions visible
- * to future-you, so the client that adds them doesn't get a vote.
+ * Adds a task you typed yourself. Only title, tier and position are sent —
+ * `created_after_confirmation` is derived from daily_state by a trigger, and
+ * `claude_suggested_tier` is forced to null, because a tier you picked has no
+ * suggestion to override. The client does not get to author its own alibi.
  */
-export async function insertTasks(
+export async function addOwnTask(
   userId: string,
   date: string,
-  drafts: DraftTask[],
-  startPosition = 0,
+  title: string,
+  tier: Tier,
+  position: number,
 ): Promise<Task[]> {
-  const rows = drafts.map((d, i) => ({
-    user_id: userId,
-    date,
-    title: d.title.trim().slice(0, 200),
-    tier: d.tier,
-    claude_suggested_tier: d.claude_suggested_tier,
-    proof_hint: d.proof_hint || null,
-    self_report_only: d.self_report_only,
-    position: startPosition + i,
-  }))
-  return unwrap(supabase.from('tasks').insert(rows).select()) as Promise<Task[]>
+  return unwrap(
+    supabase
+      .from('tasks')
+      .insert([{ user_id: userId, date, title: title.trim().slice(0, 200), tier, position }])
+      .select(),
+  ) as Promise<Task[]>
 }
 
 export async function updateTask(id: string, patch: Partial<Task>): Promise<void> {
