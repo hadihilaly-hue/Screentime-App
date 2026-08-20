@@ -1,7 +1,8 @@
-import { useEffect, useState, type ReactNode } from 'react'
-import { BrowserRouter, Link, Navigate, Route, Routes } from 'react-router-dom'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
+import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import type { Session } from '@supabase/supabase-js'
 import { supabase, isSupabaseConfigured } from './lib/supabase'
+import { getDailyState, type DailyState } from './lib/db'
 
 import MorningGate from './pages/MorningGate'
 import TaskReview from './pages/TaskReview'
@@ -11,16 +12,6 @@ import VerificationResult from './pages/VerificationResult'
 import ActiveSession from './pages/ActiveSession'
 import WeeklyReview from './pages/WeeklyReview'
 import Login from './pages/Login'
-
-const NAV = [
-  { to: '/', label: 'Gate' },
-  { to: '/review', label: 'Review' },
-  { to: '/dashboard', label: 'Dashboard' },
-  { to: '/proof', label: 'Proof' },
-  { to: '/verification', label: 'Verification' },
-  { to: '/session', label: 'Session' },
-  { to: '/weekly', label: 'Weekly' },
-]
 
 function useSession() {
   const [session, setSession] = useState<Session | null>(null)
@@ -42,53 +33,74 @@ function useSession() {
   return { session, loading }
 }
 
-function RequireAuth({ children }: { children: ReactNode }) {
-  const { session, loading } = useSession()
+/**
+ * Routing is the morning gate (spec section 2 step 1): until today's list is
+ * confirmed, every route redirects to it. There is no nav bar — you move
+ * through the day in one direction.
+ */
+function SignedIn({ userId }: { userId: string }) {
+  const [day, setDay] = useState<DailyState | null>(null)
+  const [error, setError] = useState<string | null>(null)
 
-  // Without .env values there is no auth to check. Browse the shell, but say so.
-  if (!isSupabaseConfigured) return <>{children}</>
-  if (loading) return <p>Loading...</p>
-  if (!session) return <Navigate to="/login" replace />
-  return <>{children}</>
+  const reload = useCallback(() => {
+    getDailyState(userId)
+      .then(setDay)
+      .catch((e: Error) => setError(e.message))
+  }, [userId])
+
+  useEffect(reload, [reload])
+
+  if (error) return <p className="p-4 text-red-600">{error}</p>
+  if (!day) return <p className="p-4">Loading...</p>
+
+  const confirmed = day.list_confirmed
+  const gated = (element: ReactElement) =>
+    confirmed ? element : <Navigate to="/" replace />
+
+  return (
+    <Routes>
+      <Route
+        path="/"
+        element={confirmed ? <Navigate to="/dashboard" replace /> : <MorningGate userId={userId} />}
+      />
+      <Route path="/review" element={<TaskReview userId={userId} day={day} onConfirmed={setDay} />} />
+      <Route path="/dashboard" element={gated(<Dashboard userId={userId} />)} />
+      <Route path="/session" element={gated(<ActiveSession userId={userId} />)} />
+      <Route path="/proof" element={gated(<ProofCapture />)} />
+      <Route path="/verification" element={gated(<VerificationResult />)} />
+      <Route path="/weekly" element={gated(<WeeklyReview />)} />
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  )
 }
 
-function Layout({ children }: { children: ReactNode }) {
+function NotConfigured() {
   return (
     <div className="mx-auto max-w-2xl p-4">
-      {!isSupabaseConfigured && (
-        <p className="mb-4 border border-red-500 bg-red-50 p-2 text-sm text-red-700">
-          Not connected to Supabase — auth is not enforced. Set VITE_SUPABASE_URL and
-          VITE_SUPABASE_ANON_KEY in .env.
-        </p>
-      )}
-      <nav className="mb-4 flex flex-wrap gap-3 border-b pb-2 text-sm">
-        {NAV.map((item) => (
-          <Link key={item.to} to={item.to} className="underline">
-            {item.label}
-          </Link>
-        ))}
-      </nav>
-      {children}
+      <h1 className="text-2xl font-bold">Not connected</h1>
+      <p className="mt-2 text-gray-700">
+        Copy <code>.env.example</code> to <code>.env</code> and fill in{' '}
+        <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>, then restart the dev
+        server. Nothing works without a database.
+      </p>
     </div>
   )
 }
 
 export default function App() {
+  const { session, loading } = useSession()
+
+  // In production a missing config throws at import time in lib/supabase, so
+  // this branch is dev-only by construction.
+  if (!isSupabaseConfigured) return <NotConfigured />
+  if (loading) return <p className="p-4">Loading...</p>
+  if (!session) return <Login />
+
   return (
     <BrowserRouter>
-      <Layout>
-        <Routes>
-          <Route path="/login" element={<Login />} />
-          <Route path="/" element={<RequireAuth><MorningGate /></RequireAuth>} />
-          <Route path="/review" element={<RequireAuth><TaskReview /></RequireAuth>} />
-          <Route path="/dashboard" element={<RequireAuth><Dashboard /></RequireAuth>} />
-          <Route path="/proof" element={<RequireAuth><ProofCapture /></RequireAuth>} />
-          <Route path="/verification" element={<RequireAuth><VerificationResult /></RequireAuth>} />
-          <Route path="/session" element={<RequireAuth><ActiveSession /></RequireAuth>} />
-          <Route path="/weekly" element={<RequireAuth><WeeklyReview /></RequireAuth>} />
-          <Route path="*" element={<Navigate to="/" replace />} />
-        </Routes>
-      </Layout>
+      <div className="mx-auto max-w-2xl p-4">
+        <SignedIn userId={session.user.id} />
+      </div>
     </BrowserRouter>
   )
 }

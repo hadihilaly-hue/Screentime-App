@@ -1,8 +1,9 @@
 /// <reference types="vite/client" />
 
 interface ImportMetaEnv {
-  readonly VITE_SUPABASE_URL: string
-  readonly VITE_SUPABASE_ANON_KEY: string
+  // Undefined until .env exists, which is exactly what isSupabaseConfigured checks.
+  readonly VITE_SUPABASE_URL: string | undefined
+  readonly VITE_SUPABASE_ANON_KEY: string | undefined
 }
 
 interface ImportMeta {

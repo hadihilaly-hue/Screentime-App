@@ -16,8 +16,9 @@ create table if not exists public.tasks (
   title                     text        not null check (length(btrim(title)) > 0),
   tier                      smallint    not null check (tier in (1, 2, 3)),
   status                    text        not null default 'todo'
-                                        check (status in ('todo', 'pending', 'verified', 'rejected')),
+                                        check (status in ('todo', 'pending', 'verified', 'rejected', 'cancelled')),
   claude_suggested_tier     smallint    check (claude_suggested_tier in (1, 2, 3)),
+  proof_hint                text,
   proof_urls                text[]      not null default '{}',
   verification_notes        text,
   created_after_confirmation boolean    not null default false,
@@ -75,9 +76,10 @@ alter table public.balances    enable row level security;
 alter table public.sessions    enable row level security;
 alter table public.daily_state enable row level security;
 
--- tasks: full CRUD on your own rows.
--- DELETE is allowed here because the Task Review screen (spec section 4.2)
--- lets you delete a task before confirming the day's list.
+-- tasks: select/insert/update on your own rows. DELETE is allowed only while
+-- the day's list is unconfirmed (spec section 4.2 lets you delete during Task
+-- Review); afterwards the only way out of a task is status 'cancelled', so an
+-- abandoned task stays visible in the weekly review (spec section 7).
 drop policy if exists tasks_select on public.tasks;
 create policy tasks_select on public.tasks
   for select using ((select auth.uid()) = user_id);
@@ -93,7 +95,16 @@ create policy tasks_update on public.tasks
 
 drop policy if exists tasks_delete on public.tasks;
 create policy tasks_delete on public.tasks
-  for delete using ((select auth.uid()) = user_id);
+  for delete using (
+    (select auth.uid()) = user_id
+    and not exists (
+      select 1
+      from public.daily_state ds
+      where ds.user_id = tasks.user_id
+        and ds.date    = tasks.date
+        and ds.list_confirmed
+    )
+  );
 
 -- balances: read / create / update your own. No delete.
 drop policy if exists balances_select on public.balances;
