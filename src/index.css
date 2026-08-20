@@ -1,1 +1,332 @@
 @import "tailwindcss";
+
+/* ---------------------------------------------------------------------------
+   EarnedTime design tokens. One dark palette, one accent. Acid is "you earned
+   this" — it only ever appears on the balance, on primary actions, and on the
+   running timer, so it never stops meaning anything.
+--------------------------------------------------------------------------- */
+@theme {
+  --color-ink: #07090c;
+  --color-panel: #11151b;
+  --color-panel-hi: #191f27;
+  --color-line: #252c37;
+  --color-fg: #f2f5f9;
+  --color-muted: #929cab;
+  --color-faint: #5f6979;
+  --color-acid: #c9f74e;
+  --color-acid-deep: #93bf2a;
+  --color-ember: #ff8a4c;
+  --color-alert: #ff5757;
+
+  --font-sans: 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+}
+
+@layer base {
+  html {
+    background-color: var(--color-ink);
+    -webkit-text-size-adjust: 100%;
+  }
+
+  body {
+    margin: 0;
+    min-height: 100dvh;
+    background-color: var(--color-ink);
+    /* A single cool glow behind the top of the screen, where the balance sits. */
+    background-image: radial-gradient(
+      120% 60% at 50% -10%,
+      rgb(201 247 78 / 0.07) 0%,
+      rgb(201 247 78 / 0) 60%
+    );
+    background-repeat: no-repeat;
+    background-attachment: fixed;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+    font-feature-settings: 'cv05' 1;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* Phone-first: nothing here should ever be dragged sideways or long-press
+     selected like a web page. */
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  button,
+  select,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+    touch-action: manipulation;
+  }
+
+  ::selection {
+    background: rgb(201 247 78 / 0.3);
+  }
+
+  ::placeholder {
+    color: var(--color-faint);
+  }
+}
+
+@layer components {
+  /* --- press feedback ----------------------------------------------------
+     Every tappable thing gets the same short, slightly overshooting squash.
+     It is the one piece of motion in the app you feel rather than watch. */
+  .press {
+    transition:
+      transform 140ms cubic-bezier(0.2, 0.8, 0.3, 1),
+      background-color 140ms ease,
+      border-color 140ms ease,
+      opacity 140ms ease,
+      box-shadow 140ms ease;
+  }
+
+  .press:active:not(:disabled) {
+    transform: scale(0.955);
+  }
+
+  /* --- buttons ----------------------------------------------------------- */
+  .btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.5rem;
+    min-height: 3.25rem;
+    padding: 0 1.25rem;
+    border: 1px solid transparent;
+    border-radius: 1rem;
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    cursor: pointer;
+  }
+
+  .btn:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  .btn-primary {
+    background: var(--color-acid);
+    color: #0b1005;
+    box-shadow: 0 8px 24px -12px rgb(201 247 78 / 0.75);
+  }
+
+  .btn-primary:active:not(:disabled) {
+    background: var(--color-acid-deep);
+  }
+
+  /* A dimmed acid slab still reads as the thing to tap. Disabled goes neutral
+     instead, so the accent only ever appears on an action that works. */
+  .btn-primary:disabled {
+    background: var(--color-panel-hi);
+    border-color: var(--color-line);
+    color: var(--color-faint);
+    box-shadow: none;
+    opacity: 1;
+  }
+
+  .btn-secondary {
+    background: var(--color-panel-hi);
+    border-color: var(--color-line);
+    color: var(--color-fg);
+  }
+
+  .btn-ghost {
+    background: transparent;
+    color: var(--color-muted);
+    min-height: 2.75rem;
+    font-weight: 500;
+  }
+
+  .btn-ghost:active:not(:disabled) {
+    color: var(--color-fg);
+  }
+
+  .btn-sm {
+    min-height: 2.5rem;
+    padding: 0 0.875rem;
+    border-radius: 0.75rem;
+    font-size: 0.875rem;
+  }
+
+  /* --- surfaces ---------------------------------------------------------- */
+  .card {
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 1.25rem;
+  }
+
+  /* --- chips / segmented controls ---------------------------------------- */
+  .chip {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.375rem;
+    min-height: 2.25rem;
+    padding: 0 0.75rem;
+    border: 1px solid var(--color-line);
+    border-radius: 999px;
+    background: var(--color-panel-hi);
+    color: var(--color-muted);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    white-space: nowrap;
+    cursor: pointer;
+  }
+
+  .chip[data-on='true'] {
+    background: var(--color-acid);
+    border-color: var(--color-acid);
+    color: #0b1005;
+  }
+
+  .chip:disabled {
+    opacity: 0.35;
+    cursor: default;
+  }
+
+  /* --- inputs ------------------------------------------------------------ */
+  .field {
+    width: 100%;
+    padding: 0.875rem 1rem;
+    background: var(--color-panel);
+    border: 1px solid var(--color-line);
+    border-radius: 1rem;
+    color: var(--color-fg);
+    outline: none;
+    transition: border-color 140ms ease, box-shadow 140ms ease;
+  }
+
+  .field:focus {
+    border-color: var(--color-acid-deep);
+    box-shadow: 0 0 0 3px rgb(201 247 78 / 0.12);
+  }
+
+  /* Inline title editing on the review screen: reads as text until touched. */
+  .field-bare {
+    width: 100%;
+    padding: 0;
+    background: transparent;
+    border: 0;
+    outline: none;
+    color: var(--color-fg);
+    font-size: 1rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+  }
+
+  /* --- labels ------------------------------------------------------------ */
+  .eyebrow {
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--color-faint);
+  }
+
+  .tag {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.25rem;
+    padding: 0.125rem 0.5rem;
+    border-radius: 999px;
+    font-size: 0.6875rem;
+    font-weight: 700;
+    letter-spacing: 0.02em;
+    background: var(--color-panel-hi);
+    color: var(--color-muted);
+  }
+
+  .tag-warn {
+    background: rgb(255 138 76 / 0.14);
+    color: var(--color-ember);
+  }
+
+  .tag-good {
+    background: rgb(201 247 78 / 0.14);
+    color: var(--color-acid);
+  }
+
+  /* --- banners ----------------------------------------------------------- */
+  .banner {
+    padding: 0.875rem 1rem;
+    border-radius: 1rem;
+    font-size: 0.875rem;
+    line-height: 1.4;
+  }
+
+  .banner-warn {
+    background: rgb(255 138 76 / 0.12);
+    border: 1px solid rgb(255 138 76 / 0.3);
+    color: #ffc4a3;
+  }
+
+  .banner-error {
+    background: rgb(255 87 87 / 0.12);
+    border: 1px solid rgb(255 87 87 / 0.3);
+    color: #ffb0b0;
+  }
+
+  /* --- numerals ----------------------------------------------------------
+     The balance and the countdown are the two things you read at a glance. */
+  .numeral {
+    font-variant-numeric: tabular-nums;
+    font-weight: 800;
+    letter-spacing: -0.055em;
+    line-height: 0.9;
+  }
+}
+
+@layer utilities {
+  .safe-top {
+    padding-top: max(1.25rem, env(safe-area-inset-top));
+  }
+
+  .safe-bottom {
+    padding-bottom: max(1.5rem, env(safe-area-inset-bottom));
+  }
+
+  .fade-up {
+    animation: fade-up 320ms cubic-bezier(0.2, 0.8, 0.3, 1) both;
+  }
+
+  .breathe {
+    animation: breathe 1.6s ease-in-out infinite;
+  }
+}
+
+@keyframes fade-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.82;
+    transform: scale(0.985);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fade-up,
+  .breathe {
+    animation: none;
+  }
+
+  .press:active:not(:disabled) {
+    transform: none;
+  }
+}

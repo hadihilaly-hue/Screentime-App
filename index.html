@@ -3,20 +3,43 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#111827" />
+    <meta name="theme-color" content="#07090c" />
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/icon-192.png" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap"
+      rel="stylesheet"
+    />
     <title>EarnedTime</title>
+    <style>
+      /* Painted before the bundle parses so a cold launch from the home screen
+         never flashes white. */
+      html,
+      body {
+        margin: 0;
+        background: #07090c;
+        color: #f2f5f9;
+      }
+    </style>
   </head>
   <body>
     <div id="root">
       <!-- Replaced by React on mount. Stays visible if the bundle throws first,
            which is what a production build with missing env vars does. -->
-      <div style="font-family: system-ui, sans-serif; padding: 2rem; max-width: 40rem">
-        <h1 style="font-size: 1.25rem">EarnedTime failed to start</h1>
-        <p>
+      <div
+        style="
+          font-family: Inter, system-ui, sans-serif;
+          padding: 2rem 1.5rem;
+          max-width: 28rem;
+          margin: 0 auto;
+        "
+      >
+        <h1 style="font-size: 1.35rem; letter-spacing: -0.03em">EarnedTime failed to start</h1>
+        <p style="color: #929cab; line-height: 1.5; font-size: 0.9375rem">
           If this persists, the build is missing VITE_SUPABASE_URL or
           VITE_SUPABASE_ANON_KEY. Set both in your host's environment variables and
           redeploy. The browser console has the exact error.
