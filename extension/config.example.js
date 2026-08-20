@@ -17,6 +17,12 @@ export const CONFIG = {
   // a running session ends, so this is only the safety net.
   pollMinutes: 1,
 
+  // Consecutive failed checks tolerated before a running session is re-blocked.
+  // Below this, the last known-good unlock is held (still expiry-checked), so a
+  // brief network drop no longer bounces you out mid-session and back in again.
+  // 0 means fail closed on the first error.
+  graceFailures: 3,
+
   sites: [
     {
       domain: 'snapchat.com',

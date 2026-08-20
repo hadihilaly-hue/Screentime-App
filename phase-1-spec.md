@@ -164,10 +164,16 @@ Follow-up answers get sent back with the full prior exchange for a final VERIFIE
 
 ## 10. How you'll know Phase 1 worked
 
-Track for two weeks, then look at three numbers in the weekly review:
+Track for two weeks, then look at the numbers in the weekly review. **The laptop and the phone are now measured differently**, because the Chrome extension in `extension/` landed early and actually blocks the tracked sites there. That was a deliberate trade: it buys a real wall on the laptop, and it costs the honour-system reading on that half of the surface. You cannot measure whether someone opens a site they were free to open once they are no longer free to open it.
 
-1. Task completion rate vs. a normal week (be honest about the baseline).
-2. Sessions opened WITHOUT an active timer (self-reported or noticed). This is your cheat rate.
-3. Whether the morning gate ever felt worth skipping the app entirely to avoid.
+**Phone (still honour-system — this is where the cheat rate lives):**
 
-Completion up + cheat rate tolerable = build Phase 2. Cheat rate near 100% = the design needs external walls first (parent-held Screen Time passcode), and the app becomes the door through them.
+1. Sessions opened WITHOUT an active timer (self-reported or noticed). This is your cheat rate, and the phone is now the only place it can be observed.
+2. Whether the morning gate ever felt worth skipping the app entirely to avoid.
+
+**Laptop (blocked, so measure behaviour instead of honesty):**
+
+3. Usage totals on the tracked sites — minutes actually spent inside started sessions, from the `sessions` table.
+4. Task completion rate vs. a normal week (be honest about the baseline).
+
+Completion up + phone cheat rate tolerable = build Phase 2. Phone cheat rate near 100% = the design needs external walls on the phone too (parent-held Screen Time passcode), and the app becomes the door through them — which is what the extension already is on the laptop.

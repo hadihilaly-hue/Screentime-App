@@ -22,6 +22,14 @@
       .label { color: #9ca3af; margin: 0; }
       a { color: #fff; }
       .muted { color: #9ca3af; font-size: 0.875rem; margin-top: 2rem; }
+      /* Failures get their own line so a routine diagnostics refresh a few
+         seconds later cannot quietly erase them. */
+      .alert {
+        color: #fca5a5;
+        font-size: 0.875rem;
+        margin-top: 2rem;
+        line-height: 1.4;
+      }
       .dest {
         color: #6b7280;
         font-size: 0.875rem;
@@ -52,6 +60,7 @@
         <a id="dashboard" href="#">Go to the dashboard →</a>
       </p>
       <p><button id="retry">I started a session — let me through</button></p>
+      <p class="alert" id="error" hidden></p>
       <p class="muted" id="note"></p>
       <p class="muted" style="margin-top: 0.5rem">EarnedTime Blocker <span id="version"></span></p>
     </main>

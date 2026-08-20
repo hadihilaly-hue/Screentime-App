@@ -10,6 +10,37 @@ import { query } from './supabase.js'
 const RULE_BASE = 1000
 const POLL_ALARM = 'et-poll'
 const EXPIRY_ALARM = 'et-expiry'
+const HEALTH_KEY = 'et_health'
+
+/**
+ * Consecutive failed polls tolerated before a site is re-blocked.
+ *
+ * Failing closed on the very first error meant one dropped packet mid-session
+ * yanked you out of a game you had paid minutes for, and the next poll let you
+ * straight back in — a flap, not a block. Inside the grace window the last
+ * known-good unlock set is held instead. That set is still expiry-filtered, so
+ * grace only ever covers "cannot reach Supabase", never "the session ended".
+ */
+function graceFailures() {
+  const n = CONFIG.graceFailures ?? 3
+  return Number.isFinite(n) && n >= 0 ? n : 3
+}
+
+async function readHealth() {
+  const stored = await chrome.storage.local.get(HEALTH_KEY)
+  const health = stored[HEALTH_KEY] ?? {}
+  return { failures: health.failures ?? 0, lastGood: health.lastGood ?? {} }
+}
+
+/** Held unlocks that have not run out yet. Expiry always wins over grace. */
+function stillRunning(lastGood) {
+  const now = Date.now()
+  const live = new Map()
+  for (const [domain, endsAt] of Object.entries(lastGood ?? {})) {
+    if (endsAt > now) live.set(domain, endsAt)
+  }
+  return live
+}
 
 /**
  * The block page URL. The originally requested URL rides along in the
@@ -100,15 +131,41 @@ async function evictOpenTabs(domain) {
   }
 }
 
-export async function sync() {
-  let unlocked
+async function runSync() {
+  const health = await readHealth()
+  let unlocked = null
+  let failed = false
+
   try {
     unlocked = await unlockedDomains()
   } catch {
-    // Offline, misconfigured, or Supabase erroring: fail closed and block.
-    unlocked = new Map()
+    // Offline, misconfigured, or Supabase erroring.
+    failed = true
   }
-  if (unlocked === null) unlocked = new Map() // signed out
+
+  let heldByGrace = false
+  if (failed) {
+    const grace = graceFailures()
+    health.failures = Math.min(health.failures + 1, grace + 1)
+    if (health.failures <= grace) {
+      // Still inside the grace window: hold what was true at the last good
+      // poll, minus anything that has since run out.
+      unlocked = stillRunning(health.lastGood)
+      heldByGrace = true
+    } else {
+      // Grace exhausted. Fail closed, and stop trusting the held set.
+      unlocked = new Map()
+      health.lastGood = {}
+    }
+  } else if (unlocked === null) {
+    // Signed out is a definite answer, not a failed poll. No grace for it.
+    unlocked = new Map()
+    health.failures = 0
+    health.lastGood = {}
+  } else {
+    health.failures = 0
+    health.lastGood = Object.fromEntries(unlocked)
+  }
 
   const allIds = CONFIG.sites.flatMap((_, i) => ruleIds(i))
   const addRules = CONFIG.sites.flatMap((site, i) =>
@@ -134,11 +191,27 @@ export async function sync() {
   }
 
   await chrome.storage.local.set({
+    [HEALTH_KEY]: health,
     et_status: {
       checkedAt: Date.now(),
       unlocked: Object.fromEntries(unlocked),
+      failures: health.failures,
+      heldByGrace,
     },
   })
+}
+
+/**
+ * Serialised. The alarm, the expiry alarm, the popup and the block page can all
+ * ask for a sync at once; two overlapping runs read getDynamicRules() before
+ * either has written, and the loser puts back rules the winner just removed —
+ * which looks exactly like a block flapping back on. One at a time instead.
+ */
+let syncChain = Promise.resolve()
+
+export function sync() {
+  syncChain = syncChain.then(runSync, runSync)
+  return syncChain
 }
 
 function schedulePolling() {

@@ -57,7 +57,10 @@ load and shows a failure message rather than an app with no auth gate.
   installs as a standalone PWA.
 - **Laptop:** set the deployed URL as your browser homepage.
 
-Phase 1 is honour-system: the timer does not block Snapchat, it just runs.
+Phase 1 is honour-system **on the phone**: the timer runs, but nothing stops
+you opening Snapchat anyway. On the **laptop** it is not — the Chrome
+extension in `extension/` redirects the tracked sites to a block page unless
+a session for them is running. See `extension/README.md`.
 
 ## Status
 

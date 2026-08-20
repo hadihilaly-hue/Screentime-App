@@ -67,6 +67,13 @@ obvious rather than silent:
 - `MATCHES youtube.com` and still blocked — the worker did not drop the rules.
   The line will say so; reload the extension.
 - `Could not reach Supabase: …` — network or config problem, verbatim.
+- `N failed check(s), holding last known state` — the worker cannot reach
+  Supabase and is inside its grace window; the block has not come back yet.
+- `N failed check(s), blocking until one succeeds` — grace is used up and it has
+  failed closed.
+
+Failures print on their own line above the diagnostics, so the routine status
+refresh a few seconds later cannot overwrite the message worth reading.
 
 ## How it works
 
@@ -87,14 +94,29 @@ obvious rather than silent:
   while it is open, it checks Supabase itself for a session covering this site.
   If it finds one it has the worker drop the rules first, then sends you on to
   the URL you originally asked for — so starting a session in the app releases
-  a block page that is already open, without touching it.
+  a block page that is already open, without touching it. Once it has released
+  you it stops checking, and while the tab is hidden it drops to once a minute.
 - The URL you were heading to rides along in the block page's fragment, so an
-  unlock returns you to that exact page rather than the site's front door.
-- The popup's **Re-check now** forces the same immediate re-check.
+  unlock returns you to that exact page rather than the site's front door. It is
+  only honoured when it is `http(s)` **on the blocked site itself** (or a
+  subdomain). `blocked.html` is web-accessible, so without that check a crafted
+  `blocked.html#from=…` would make the extension navigate anywhere on request.
+- The popup's **Re-check now** forces the same immediate re-check. Syncs are
+  serialised, so the popup, the block page and the alarm cannot interleave two
+  rule rewrites and leave the loser's rules behind.
 - When a site goes back to blocked, tabs already sitting on it are redirected
   too — you do not have to reload for the block to come back.
-- **It fails closed.** Signed out, offline, or Supabase erroring, everything
-  stays blocked.
+- **It fails closed, after a grace window.** Signed out is immediate: everything
+  blocks. A failed *check* — offline, or Supabase erroring — is tolerated for
+  `graceFailures` consecutive polls (default 3, set it to 0 for the old
+  block-on-first-error behaviour), during which the last known-good unlock is
+  held. That held state is still expiry-checked, so grace only ever covers "I
+  cannot reach Supabase", never "your session ended". Without it a single
+  dropped packet mid-session bounced you to the block page and the next poll let
+  you straight back in.
+- If a release is immediately followed by landing back on the block page, the
+  page stops auto-navigating and waits for the button, rather than ping-ponging
+  with the worker.
 
 ## Adding a site
 
