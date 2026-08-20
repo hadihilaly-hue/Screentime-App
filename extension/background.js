@@ -150,8 +150,18 @@ async function evictOpenTabs(domain) {
   const tabs = await chrome.tabs.query({ url: [`*://${domain}/*`, `*://*.${domain}/*`] })
   const site = sites().find((s) => s.domain === domain)
   for (const tab of tabs) {
-    // Carry the URL the tab was on, so restarting a session returns you to it.
-    if (tab.id !== undefined) await chrome.tabs.update(tab.id, { url: blockedUrl(site, tab.url) })
+    if (tab.id === undefined) continue
+    try {
+      // Carry the URL the tab was on, so restarting a session returns you to it.
+      await chrome.tabs.update(tab.id, { url: blockedUrl(site, tab.url) })
+    } catch (e) {
+      // Guarded per tab, not per domain. A tab closed between the query above
+      // and this update rejects with "No tab with id", which is ordinary with
+      // several tabs open on one site — and an unguarded throw here skipped
+      // every tab behind it. Query order is stable, so the same doomed tab
+      // shielded the same tabs on every poll, forever.
+      console.warn(`EarnedTime: could not evict tab ${tab.id} on ${domain}`, e)
+    }
   }
 }
 
@@ -183,8 +193,10 @@ async function evictBlockedTabs(domains) {
     try {
       await evictOpenTabs(domain)
     } catch (e) {
-      // One tab refusing to be updated must not cost the other sites their
-      // eviction, nor the rest of this sync its alarm and status write.
+      // Individual tabs are guarded inside evictOpenTabs, so this is the
+      // backstop for the query itself failing. One site's failure must not cost
+      // the others their eviction, nor the rest of this sync its alarm and
+      // status write.
       console.warn(`EarnedTime: could not evict tabs on ${domain}`, e)
     }
   }
@@ -248,7 +260,19 @@ async function runSync() {
     unlocked.has(site.domain) ? [] : rulesFor(site, i),
   )
 
-  await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: allIds, addRules })
+  // A rejected rules write used to take the sweep, the expiry alarm and the
+  // status write down with it — runSync simply stopped. The next sync recovered
+  // the rules, but in the meantime the block page showed a stale "last checked"
+  // with nothing to say anything had gone wrong. Recorded and carried on
+  // instead: eviction is the safer half of the pair anyway, and it is exactly
+  // the half you want when the rules did not make it.
+  let rulesError = null
+  try {
+    await chrome.declarativeNetRequest.updateDynamicRules({ removeRuleIds: allIds, addRules })
+  } catch (e) {
+    rulesError = String(e?.message ?? e)
+    console.warn('EarnedTime: could not write the block rules', e)
+  }
 
   // Rules first, then tabs: a tab evicted before the rules were back could
   // navigate straight to the site again. Every blocked domain is checked, not
@@ -274,15 +298,18 @@ async function runSync() {
       heldByGrace,
       phase: phase.kind,
       phaseEndsAt: phase.endsAt,
+      rulesError,
     },
   })
 }
 
 /**
  * Serialised. The alarm, the expiry alarm, the popup and the block page can all
- * ask for a sync at once; two overlapping runs read getDynamicRules() before
- * either has written, and the loser puts back rules the winner just removed —
- * which looks exactly like a block flapping back on. One at a time instead.
+ * ask for a sync at once, and two overlapping runs interleave their rule writes
+ * and their tab sweeps: the loser's updateDynamicRules can put back rules the
+ * winner just removed, which looks exactly like a block flapping on, and its
+ * sweep can evict a tab the winner had legitimately released. One at a time
+ * instead.
  */
 let syncChain = Promise.resolve()
 

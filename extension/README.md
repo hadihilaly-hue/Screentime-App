@@ -179,8 +179,15 @@ refresh a few seconds later cannot overwrite the message worth reading.
   that matters — a redirect rule only sees network requests, so reloading a
   site with a service worker can be answered from its cache and never trips it.
   Ending a session early re-blocked the rule while the tab you were already on
-  carried on working. A tab that refuses to be updated is logged and retried on
-  the next poll rather than taking the rest of the sweep down with it.
+  carried on working. Each tab's redirect is guarded on its own, so a tab that
+  refuses to be updated — a tab closed between the query and the update rejects
+  with "No tab with id", which is ordinary with several tabs on one site — is
+  logged and retried on the next poll without shielding the tabs behind it.
+- A rules write that the browser rejects no longer skips the sweep, the expiry
+  alarm and the status write. It is recorded, the sweep runs anyway (it is the
+  safer half of the pair), and the block page's diagnostics say
+  `LAST RULES WRITE FAILED`, so the symptom is not just sites quietly not
+  blocking.
 - **It fails closed, after a grace window.** Signed out is immediate: everything
   blocks. A failed *check* — offline, or Supabase erroring — is tolerated for
   `graceFailures` consecutive polls (default 3, set it to 0 for the old

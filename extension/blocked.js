@@ -142,6 +142,10 @@ async function renderDiagnostics(state) {
           : `${status.failures} failed check(s), blocking until one succeeds`,
       )
     }
+    // A rules write that failed is not a failed check — the sessions query was
+    // fine, the browser refused the rules. Without this the only symptom is
+    // sites quietly not blocking.
+    if (status.rulesError) bits.push(`LAST RULES WRITE FAILED: ${status.rulesError}`)
   } else {
     bits.push('worker has not checked yet')
   }

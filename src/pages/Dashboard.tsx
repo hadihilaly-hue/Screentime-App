@@ -48,8 +48,15 @@ export default function Dashboard({ userId }: { userId: string }) {
    * drops its results if a newer one has been issued since.
    */
   const reloadSeq = useRef(0)
-  /** Whether the banner on screen came from a failed poll, so recovery clears it. */
-  const errorFromReload = useRef(false)
+  /**
+   * Where the banner on screen came from.
+   *
+   * 'poll' clears when a poll succeeds; 'action' persists until the next action
+   * and is never overwritten by a poll — a poll runs every ten seconds, and
+   * losing the reason a task refused to complete under a transient network
+   * blip is worse than showing nothing about the blip.
+   */
+  const errorSource = useRef<'poll' | 'action' | null>(null)
   const navigate = useNavigate()
 
   const reload = useCallback(async () => {
@@ -59,6 +66,9 @@ export default function Dashboard({ userId }: { userId: string }) {
       const active = await getActiveSession(userId)
       if (stale()) return
       if (active) {
+        // Claim the sequence before navigating, so a reload still in flight
+        // cannot write into a screen that is on its way out.
+        reloadSeq.current++
         navigate('/session')
         return
       }
@@ -67,17 +77,16 @@ export default function Dashboard({ userId }: { userId: string }) {
       if (stale()) return
       setTasks(nextTasks)
       setBalance(nextBalance)
-      // Clear only a banner a previous poll put up. A failure from an action
-      // stays until the next action — the poll runs every ten seconds, and
-      // wiping the reason a task refused to complete is worse than a stale
-      // banner.
-      if (errorFromReload.current) {
-        errorFromReload.current = false
+      // Clear only a banner a previous poll put up.
+      if (errorSource.current === 'poll') {
+        errorSource.current = null
         setError(null)
       }
     } catch (e) {
       if (stale()) return
-      errorFromReload.current = true
+      // Never paper over an action's failure with a poll's.
+      if (errorSource.current === 'action') return
+      errorSource.current = 'poll'
       setError((e as Error).message)
     }
   }, [userId, navigate])
@@ -120,7 +129,11 @@ export default function Dashboard({ userId }: { userId: string }) {
   async function onComplete(task: Task) {
     busyRef.current = true
     setBusy(true)
-    errorFromReload.current = false
+    // Invalidate any reload already in flight: one that resolves during
+    // completeTask below would otherwise pass its staleness check and write the
+    // pre-completion balance back, or navigate away mid-write.
+    reloadSeq.current++
+    errorSource.current = null
     setError(null)
     setNotice(null)
     try {
@@ -134,7 +147,7 @@ export default function Dashboard({ userId }: { userId: string }) {
       }
       await reload()
     } catch (e) {
-      errorFromReload.current = false
+      errorSource.current = 'action'
       setError((e as Error).message)
     }
     busyRef.current = false
