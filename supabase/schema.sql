@@ -35,7 +35,9 @@ create table if not exists public.balances (
   user_id              uuid        not null references auth.users (id) on delete cascade,
   date                 date        not null default current_date,
   minutes_available    integer     not null default 0 check (minutes_available >= 0),
-  minutes_earned_total integer     not null default 0 check (minutes_earned_total >= 0),
+  minutes_earned_total integer     not null default 0
+                                   constraint balances_daily_cap
+                                   check (minutes_earned_total between 0 and 60),
   all_tasks_bonus      boolean     not null default false,
   updated_at           timestamptz not null default now(),
   primary key (user_id, date)
@@ -84,9 +86,12 @@ drop policy if exists tasks_select on public.tasks;
 create policy tasks_select on public.tasks
   for select using ((select auth.uid()) = user_id);
 
+-- Insert-only date guard: a task cannot be backdated or post-dated into a
+-- fresh daily cap. Not a CHECK constraint — current_date is STABLE, and CHECK
+-- requires IMMUTABLE.
 drop policy if exists tasks_insert on public.tasks;
 create policy tasks_insert on public.tasks
-  for insert with check ((select auth.uid()) = user_id);
+  for insert with check ((select auth.uid()) = user_id and date = current_date);
 
 drop policy if exists tasks_update on public.tasks;
 create policy tasks_update on public.tasks
