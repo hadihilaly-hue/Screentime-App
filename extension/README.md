@@ -115,17 +115,27 @@ the site may never open for free.**
 - **The insert is rejected** → the minutes are refunded. Nothing exists yet, so
   the undo is a single write. (The refund is a compare-and-swap and can itself
   be refused if the balance moved; the page says so rather than pretending.)
-- **The rules write is refused, so the site stays blocked** → **the minutes stay
-  spent.** The session row is closed instead — retried up to five times with
-  backoff — so the tap cannot unlock the site later on a write that does
-  succeed. The block page says exactly that, including that the minutes are
-  gone.
+- **The release is definitively refused** → **the minutes stay spent.** Two
+  things count as definitive, and both cost the minutes:
+  - the browser rejecting the rules write, so the old rules survive; and
+  - the worker's own decision leaving the domain blocked while it *could* read
+    the sessions table — most often an `app_name` in `sites` that matches no
+    session. That one is a configuration fault rather than a browser one, but
+    the outcome is identical (paid, still outside), so the policy is identical
+    rather than a quiet exception.
 
-Losing minutes to a rejected rules write is rare, visible, and recoverable by
-finishing another task. A free unlock is none of those, and it is the one thing
-the schedule exists to prevent. Two earlier attempts to refund this case
-produced, in order, a free unlock and a retry loop that reported the wrong
-cause — so the refund is gone rather than repaired.
+  Instead of a refund, the session row is **closed** — attempted up to five
+  times with backoff (500ms doubling to 4s) — so the tap cannot unlock the site
+  later on a check that does succeed. That is an attempt, not a guarantee: if
+  all five fail, or the row cannot be confirmed closed, the block page says so,
+  and the session may still unlock the site on a later check before it expires
+  on its own. What it never does is claim a close it could not verify.
+
+Losing minutes this way is rare, visible, and recoverable by finishing another
+task. A free unlock is none of those, and it is the one thing the schedule
+exists to prevent. Two earlier attempts to refund this case produced, in order,
+a free unlock and a retry loop that reported the wrong cause — so the refund is
+gone rather than repaired.
 
 A check that simply did not finish, or a decision the worker is holding through
 its grace window, changes nothing at all: the session stands and the page keeps

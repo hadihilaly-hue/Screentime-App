@@ -76,7 +76,7 @@ let errorIsSticky = false
 /**
  * @param {string} message
  * @param {{sticky?: boolean}} [options] sticky survives the routine poll's
- *   clearError(). A message about minutes that were taken and given back is
+ *   clearError(). A message about minutes that were taken and not given back is
  *   worth more than a tidy screen, and the five-second poll would otherwise
  *   erase it before it had been read — the same way the diagnostics line used
  *   to erase failures before errors were given their own line.
@@ -455,13 +455,23 @@ async function pick(minutes) {
     renderWindow()
     el('spend-hint').textContent = 'Closing the session that was refused…'
 
-    const outcome = await closeRefusedSession(started)
-    closing = false
+    let outcome
+    try {
+      outcome = await closeRefusedSession(started)
+    } catch (e) {
+      // closeRefusedSession is written not to throw, but the flag must not
+      // depend on that staying true: a stuck `closing` freezes the buttons,
+      // Check again and the poll all at once, with no way back but a reload.
+      outcome = { closed: false, attempts: 0, error: String(e?.message ?? e) }
+    } finally {
+      closing = false
+    }
 
+    const tries = outcome.attempts > 1 ? ` after ${outcome.attempts} attempts` : ''
     showError(
       outcome.closed
         ? `${result.message} Your ${minutes} minutes are spent — the session has been closed so it cannot unlock anything later.`
-        : `${result.message} Your ${minutes} minutes are spent, and the session could not be closed after ${outcome.attempts} attempts (${outcome.error}); it will expire on its own within ${minutes} minutes.`,
+        : `${result.message} Your ${minutes} minutes are spent, and the session could not be closed${tries} (${outcome.error}). It may still unlock ${domain} on a later check, and will expire on its own within ${minutes} minutes.`,
       { sticky: true },
     )
   } else if (!result.released) {

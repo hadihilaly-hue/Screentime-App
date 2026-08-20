@@ -131,7 +131,15 @@ const closeBackoff = (attempt) => 500 * 2 ** (attempt - 1)
 const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 /**
- * Close a session that was paid for and then refused by the rules write.
+ * Close a session that was paid for and then not let through.
+ *
+ * Called on either definite refusal, and both cost the minutes: the browser
+ * rejecting the rules write, and the worker's own decision leaving the domain
+ * blocked when it could read the sessions table (an app_name that matches no
+ * site, most often). The second is rarer and is a configuration fault rather
+ * than a browser one, but the outcome for the user is identical — paid, still
+ * outside — so it gets the identical, stated policy rather than a quiet
+ * exception.
  *
  * **The minutes are not refunded.** Two rounds of trying to refund them
  * produced, in order, a free unlock (refunding while the row was still open
@@ -149,12 +157,19 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * Filtered on `ended_at=is.null`, so it can only ever close a running session,
  * never rewrite the end of a finished one (spec section 7).
  *
- * Zero rows back is checked, not assumed. It usually means the row is not
- * running — already closed by an earlier attempt, or by the app's End Early —
- * and the goal is the row not running, not this call being the one to do it.
- * But PostgREST answers the same way when RLS filters the row, so the state is
- * read back rather than inferred. Guessing at zero rows is what made the
- * previous version loop forever reporting a cause that was not true.
+ * Zero rows back is checked, and where it cannot be checked it is not claimed.
+ * It usually means the row is not running — already closed by an earlier
+ * attempt, or by the app's End Early — and the goal is the row not running, not
+ * this call being the one to do it. But PostgREST answers the same way when RLS
+ * filters the row, so the row is read back:
+ *
+ *   * visible and ended  → closed. The write was redundant, the goal is met.
+ *   * visible and running → the write is being refused. Retry.
+ *   * not visible        → NOT closed. There is no DELETE policy on sessions,
+ *     so a missing row is never "gone" — it is "not ours to see", under the
+ *     same predicate that filtered the write. The row may well still be
+ *     running, and saying otherwise would be the caller's cue to tell the user
+ *     it can no longer unlock anything, which is exactly what is not known.
  *
  * Returns `{ closed, attempts, error }`. Never throws.
  */
@@ -176,14 +191,21 @@ export async function closeRefusedSession(started) {
       // Zero rows: confirm the row really is finished before saying so.
       const check = await query(`sessions?select=ended_at&id=eq.${session.id}`)
       if (check === null) return { closed: false, attempts: attempt, error: 'signed out' }
-      if (check.length === 0 || check[0].ended_at) {
-        // Gone, or genuinely ended. Either way it cannot unlock anything.
-        return { closed: true, attempts: attempt, error: null }
+      if (check.length === 0) {
+        // Invisible to this account, so unknowable from here — and retrying
+        // cannot change whose account this is.
+        return {
+          closed: false,
+          attempts: attempt,
+          error: 'the session is not visible to this account',
+        }
       }
+      if (check[0].ended_at) return { closed: true, attempts: attempt, error: null }
       // Still running and the write did not take it: something is refusing us.
       error = 'the session row would not accept the close'
     } catch (e) {
-      error = e.message
+      // Not every throw is an Error; String() beats rendering "undefined".
+      error = String(e?.message ?? e)
     }
     if (attempt < CLOSE_ATTEMPTS) await delay(closeBackoff(attempt))
   }

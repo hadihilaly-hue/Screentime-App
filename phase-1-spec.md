@@ -83,6 +83,13 @@ window the loop is:
    20. Any length you cannot afford is disabled.
 3. You tap one. That single tap spends the minutes, writes the session row,
    drops the block, and sends you on to the URL you originally asked for.
+   **If the block does not actually lift, the minutes still go.** The economy
+   fails towards overcharging you, never towards a free unlock: a tap that is
+   definitively refused closes its session rather than refunding it, so it
+   cannot open the site later, and the block page says plainly that the minutes
+   are gone. Being short a few minutes is recoverable by finishing another task;
+   an unlock nobody paid for is the one thing this whole schedule exists to
+   prevent. (`extension/README.md` has the exact failure branches.)
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
    built today. Ending early re-blocks within the poll interval (up to a
    minute), also as built today — the app cannot signal the extension, so the

@@ -11,14 +11,21 @@
 --
 -- After this, an UPDATE only matches a session that is still running. Stamping
 -- ended_at works exactly as before; a second write to the same row matches zero
--- rows instead of quietly moving the end time. Nothing in the app or the
--- extension updates a finished session, so this changes no working path:
---   - endStaleSessions (src/lib/db.ts) filters on ended_at is null.
---   - endSession (src/lib/db.ts) does not filter, but only ever targets a row
+-- rows instead of quietly moving the end time.
+--
+-- One behaviour changes, and it is the intended one: closing an already-closed
+-- session now fails loudly instead of silently rewriting its end time.
+--   - endStaleSessions (src/lib/db.ts) filters on ended_at is null — unaffected.
+--   - closeRefusedSession (extension/spend.js) filters on ended_at is null, and
+--     reads the row back rather than assuming what zero rows meant — unaffected.
+--   - endSession (src/lib/db.ts) does not filter. It normally targets a row
 --     getActiveSession returned, and that query selects running sessions only.
---     It already treats zero rows as an error, so the one behaviour change is
---     that closing an already-closed session now says so instead of silently
---     moving its end time — which is the point.
+--     But if another client closed that session first — two app tabs on the
+--     TIME'S UP screen, or a tab left open overnight while another runs
+--     endStaleSessions — the click now raises "Could not close that session."
+--     where it previously succeeded by moving the end time. That write was the
+--     one this migration exists to stop, so the new error is correct; it is
+--     listed here because it is a real, if rare, user-visible change.
 --   - closeRefusedSession (extension/spend.js) filters on ended_at is null and
 --     already treats "zero rows" as "not running", which is the outcome it
 --     wants.
