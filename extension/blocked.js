@@ -2,7 +2,7 @@ import { CONFIG } from './config.js'
 import { query, getSession } from './supabase.js'
 import { phaseAt, spendOpensAt, clockLabel, phaseSummary } from './schedule.js'
 import { randomQuote } from './quotes.js'
-import { readBalance, startSession } from './spend.js'
+import { readBalance, startSession, rollbackSession } from './spend.js'
 import { isAlwaysAllowed } from './always-allowed.js'
 
 const params = new URLSearchParams(location.search)
@@ -71,12 +71,30 @@ el('quote').hidden = false
  * later overwrote whatever the failure had just said with the routine status
  * text — the one message worth reading was always the one that vanished.
  */
-function showError(message) {
+let errorIsSticky = false
+
+/**
+ * @param {string} message
+ * @param {{sticky?: boolean}} [options] sticky survives the routine poll's
+ *   clearError(). A message about minutes that were taken and given back is
+ *   worth more than a tidy screen, and the five-second poll would otherwise
+ *   erase it before it had been read — the same way the diagnostics line used
+ *   to erase failures before errors were given their own line.
+ */
+function showError(message, { sticky = false } = {}) {
   el('error').textContent = message
   el('error').hidden = !message
+  errorIsSticky = Boolean(message) && sticky
 }
 
 function clearError() {
+  if (errorIsSticky) return
+  showError('')
+}
+
+/** Only a deliberate act — tapping a length, or Check again — drops a sticky error. */
+function dismissError() {
+  errorIsSticky = false
   showError('')
 }
 
@@ -146,6 +164,7 @@ async function renderDiagnostics(state) {
     // fine, the browser refused the rules. Without this the only symptom is
     // sites quietly not blocking.
     if (status.rulesError) bits.push(`LAST RULES WRITE FAILED: ${status.rulesError}`)
+    if (status.evictErrors?.length) bits.push(`tabs not evicted — ${status.evictErrors.join('; ')}`)
   } else {
     bits.push('worker has not checked yet')
   }
@@ -291,9 +310,20 @@ async function navigateBack() {
 }
 
 /**
- * Have the worker rewrite its rules, confirm this domain really is unlocked,
- * then go. Rules must actually be gone before navigating, or the redirect just
- * fires again and you land straight back here.
+ * Have the worker rewrite its rules, confirm the write actually landed and that
+ * this domain came out unlocked, then go.
+ *
+ * Both halves are needed. `unlocked` is only what the worker decided; a rules
+ * write that the browser rejected leaves the previous rules installed, so the
+ * site is still blocked no matter how the decision reads. Navigating on the
+ * decision alone bounced straight back off the surviving rule — and on the paid
+ * path, that bounce arrived after the minutes had gone.
+ *
+ * Returns `released`, and `definite` for a refusal the worker is sure about.
+ * "The worker did not answer" is not definite: the sync may well have worked,
+ * and the page's own polling will release on the next pass. A rejected rules
+ * write, or a decision that leaves this domain blocked, is — the site is still
+ * walled and will stay that way until something changes.
  */
 async function dropRulesAndGo(reason) {
   let reply
@@ -301,18 +331,23 @@ async function dropRulesAndGo(reason) {
     reply = await chrome.runtime.sendMessage({ type: 'sync' })
   } catch (e) {
     showError(`${reason}, but the background worker did not answer (${e.message}). Try again.`)
-    return false
+    return { released: false, definite: false }
   }
   if (!reply?.ok) {
-    showError(`${reason}, but the rule refresh failed: ${reply?.error ?? 'no reply'}`)
-    return false
+    showError(
+      `${reason}, but the browser refused the block rules (${reply?.error ?? 'no reply'}), so ${domain} is still blocked.`,
+      { sticky: true },
+    )
+    return { released: false, definite: Boolean(reply?.error) }
   }
   if (!reply.unlocked?.[domain]) {
-    showError(`${reason}, but the worker still has ${domain} blocked. Reload the extension.`)
-    return false
+    showError(`${reason}, but the worker still has ${domain} blocked. Reload the extension.`, {
+      sticky: true,
+    })
+    return { released: false, definite: true }
   }
   await navigateBack()
-  return true
+  return { released: true, definite: false }
 }
 
 /**
@@ -342,7 +377,7 @@ async function releaseIfUnlocked({ manual = false } = {}) {
 
   if (phase.kind === 'open') {
     // 7:00am-9:00am: nothing is blocked, so nothing has to be spent either.
-    return await dropRulesAndGo('The open window is running')
+    return (await dropRulesAndGo('The open window is running')).released
   }
   if (phase.kind !== 'spend') return false
   if (!state.mine) return false
@@ -358,7 +393,7 @@ async function releaseIfUnlocked({ manual = false } = {}) {
     return false
   }
 
-  return await dropRulesAndGo('Session is running')
+  return (await dropRulesAndGo('Session is running')).released
 }
 
 /* --- starting a session --------------------------------------------------- */
@@ -371,12 +406,13 @@ async function releaseIfUnlocked({ manual = false } = {}) {
 async function pick(minutes) {
   if (busy || released) return
   busy = true
-  clearError()
+  dismissError()
   renderWindow()
   el('spend-hint').textContent = `Starting ${minutes} minutes…`
 
+  let started
   try {
-    await startSession(site, minutes)
+    started = await startSession(site, minutes)
   } catch (e) {
     showError(e.message)
     busy = false
@@ -388,10 +424,26 @@ async function pick(minutes) {
   // An explicit start is the user overriding any anti-flap hold.
   autoNavigate = true
   await clearMark()
+
+  const result = await dropRulesAndGo('Session started')
+  if (!result.released && result.definite) {
+    // Paid for, and definitively still blocked. Undo the tap rather than
+    // leaving minutes spent against a wall that did not move — the session
+    // clock would otherwise run down while the site stayed shut. The specific
+    // reason is already on screen from dropRulesAndGo; only add to it if the
+    // undo itself could not finish.
+    const failures = await rollbackSession(started)
+    const said = el('error').textContent
+    if (failures.length) {
+      showError(`${said} Also, ${failures.join(', and ')}.`, { sticky: true })
+    } else {
+      showError(`${said} Your ${minutes} minutes were not spent.`, { sticky: true })
+    }
+  }
+
   await refreshBalance()
   busy = false
-
-  if (!(await dropRulesAndGo('Session started'))) renderWindow()
+  if (!result.released) renderWindow()
 }
 
 async function refreshBalance() {
@@ -449,7 +501,7 @@ document.addEventListener('visibilitychange', () => {
 
 el('retry').addEventListener('click', async () => {
   if (released || busy) return
-  clearError()
+  dismissError()
   el('note').textContent = 'Checking…'
   // An explicit press is the user overriding the anti-flap hold.
   autoNavigate = true

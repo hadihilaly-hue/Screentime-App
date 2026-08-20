@@ -149,6 +149,7 @@ async function unlockedDomains(windowEndsAt) {
 async function evictOpenTabs(domain) {
   const tabs = await chrome.tabs.query({ url: [`*://${domain}/*`, `*://*.${domain}/*`] })
   const site = sites().find((s) => s.domain === domain)
+  const refused = []
   for (const tab of tabs) {
     if (tab.id === undefined) continue
     try {
@@ -160,9 +161,11 @@ async function evictOpenTabs(domain) {
       // several tabs open on one site — and an unguarded throw here skipped
       // every tab behind it. Query order is stable, so the same doomed tab
       // shielded the same tabs on every poll, forever.
+      refused.push(tab.id)
       console.warn(`EarnedTime: could not evict tab ${tab.id} on ${domain}`, e)
     }
   }
+  return refused
 }
 
 /**
@@ -189,17 +192,26 @@ async function evictOpenTabs(domain) {
  * because an evicted tab is on the block page and no longer matches.
  */
 async function evictBlockedTabs(domains) {
+  // Reported rather than only logged. A tab closed mid-sweep is gone by the
+  // next one, so it clears itself; a tab that genuinely will not move shows up
+  // here every single sync, which is exactly what "persistent" looks like from
+  // the outside. Without this the rules half of the pair was visible and the
+  // eviction half was silent.
+  const errors = []
   for (const domain of domains) {
     try {
-      await evictOpenTabs(domain)
+      const refused = await evictOpenTabs(domain)
+      if (refused.length) errors.push(`${domain}: ${refused.length} tab(s) would not move`)
     } catch (e) {
       // Individual tabs are guarded inside evictOpenTabs, so this is the
       // backstop for the query itself failing. One site's failure must not cost
       // the others their eviction, nor the rest of this sync its alarm and
       // status write.
+      errors.push(`${domain}: ${e?.message ?? e}`)
       console.warn(`EarnedTime: could not evict tabs on ${domain}`, e)
     }
   }
+  return errors
 }
 
 async function runSync() {
@@ -277,7 +289,7 @@ async function runSync() {
   // Rules first, then tabs: a tab evicted before the rules were back could
   // navigate straight to the site again. Every blocked domain is checked, not
   // just the ones that changed this pass — see evictBlockedTabs.
-  await evictBlockedTabs(
+  const evictErrors = await evictBlockedTabs(
     blockable.filter((site) => !unlocked.has(site.domain)).map((site) => site.domain),
   )
 
@@ -299,6 +311,7 @@ async function runSync() {
       phase: phase.kind,
       phaseEndsAt: phase.endsAt,
       rulesError,
+      evictErrors: evictErrors.length ? evictErrors : null,
     },
   })
 }
@@ -338,12 +351,24 @@ chrome.alarms.onAlarm.addListener(() => sync())
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'sync') {
     // The block page and the popup both use this to force a re-check on demand
-    // instead of waiting out the poll interval. The reply carries which domains
-    // are unlocked, so the caller knows whether it is safe to navigate back.
+    // instead of waiting out the poll interval.
+    //
+    // The reply carries rulesError as well as the unlock set, and that pairing
+    // is load-bearing. `unlocked` is what this worker *decided*; the rules
+    // write is what actually happened. updateDynamicRules is atomic, so when it
+    // rejects the OLD rules are still installed and the site is still blocked
+    // however the decision reads. Answering ok:true off the decision alone sent
+    // the block page back to a site it had just paid for and been refused —
+    // rules intact, minutes gone. The write has to be reported, not just the
+    // intent.
     sync().then(
       async () => {
         const { et_status: status } = await chrome.storage.local.get('et_status')
-        sendResponse({ ok: true, unlocked: status?.unlocked ?? {} })
+        sendResponse({
+          ok: !status?.rulesError,
+          error: status?.rulesError ?? null,
+          unlocked: status?.unlocked ?? {},
+        })
       },
       (e) => sendResponse({ ok: false, error: String(e) }),
     )

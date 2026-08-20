@@ -25,7 +25,9 @@ opens a tracked site at 2pm. Unlocks are capped at the end of the window too, so
 a 20-minute session started at 11:55pm ends at midnight with the balance.
 
 Boundaries fire on an alarm rather than on the one-minute poll, so 9:00am blocks
-at 9:00am and evicts whatever was open.
+at 9:00am and sweeps the tabs that were open. The sweep is best-effort per tab:
+one the browser will not redirect is reported and retried on the next check
+rather than silently skipped — see the eviction bullet under **How it works**.
 
 ## Always allowed (spec section 3B)
 

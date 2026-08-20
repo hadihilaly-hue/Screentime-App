@@ -35,6 +35,10 @@ async function render() {
 
   const { et_status: status } = await chrome.storage.local.get('et_status')
   const unlocked = status?.unlocked ?? {}
+  // A rejected rules write leaves the previous rules in place, so the worker's
+  // decision and what the browser is actually enforcing have come apart. Saying
+  // "blocked" off the decision alone asserts a wall that may not be there.
+  const rulesFailed = Boolean(status?.rulesError)
   el('sites').innerHTML = ''
   for (const site of blockableSites(CONFIG.sites)) {
     const endsAt = unlocked[site.domain]
@@ -48,6 +52,9 @@ async function render() {
     } else if (endsAt) {
       state.className = 'open'
       state.textContent = `open · ${minutesLeft(endsAt)}m left`
+    } else if (rulesFailed) {
+      state.className = 'error'
+      state.textContent = 'should be blocked'
     } else {
       state.className = 'blocked'
       state.textContent = 'blocked'
@@ -58,6 +65,11 @@ async function render() {
   el('checked').textContent = status?.checkedAt
     ? `Last checked ${new Date(status.checkedAt).toLocaleTimeString()}`
     : 'Not checked yet'
+
+  const trouble = []
+  if (status?.rulesError) trouble.push(`Browser refused the block rules: ${status.rulesError}`)
+  if (status?.evictErrors?.length) trouble.push(`Tabs not evicted — ${status.evictErrors.join('; ')}`)
+  errorEl.textContent = trouble.join(' · ')
 }
 
 async function resync() {

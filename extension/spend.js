@@ -116,5 +116,37 @@ export async function startSession(site, minutes) {
   }
 
   const endsAt = new Date(row[0].started_at).getTime() + minutes * 60_000
-  return { session: row[0], endsAt: Math.min(endsAt, phase.endsAt) }
+  // `before` and `minutes` ride along so the caller can undo the whole thing if
+  // the block never actually lifts — see rollbackSession.
+  return { session: row[0], endsAt: Math.min(endsAt, phase.endsAt), before, minutes }
+}
+
+/**
+ * Undo a session that was paid for but never let you in.
+ *
+ * The order cannot be fixed by rearranging it: the worker only unlocks a domain
+ * once a session row exists, so the spend genuinely has to happen before the
+ * rules can drop. That leaves a window where the minutes are gone and the rules
+ * write then fails, and the honest answer to "charged without access" there is
+ * to put it back — end the session so it cannot unlock anything later, and
+ * refund by the same compare-and-swap the insert path uses, so a refund cannot
+ * hand back minutes something else has since spent.
+ *
+ * Returns a list of what could not be undone; empty means the tap left no trace.
+ */
+export async function rollbackSession(started) {
+  const { session, before, minutes } = started
+  const errors = []
+
+  try {
+    const rows = await patch(`sessions?id=eq.${session.id}`, { ended_at: new Date().toISOString() })
+    if (!rows || rows.length === 0) errors.push('the session could not be closed')
+  } catch (e) {
+    errors.push(`the session could not be closed (${e.message})`)
+  }
+
+  const refunded = await swapAvailable(session.user_id, before - minutes, before).catch(() => false)
+  if (!refunded) errors.push(`the ${minutes} minutes could not be refunded`)
+
+  return errors
 }
