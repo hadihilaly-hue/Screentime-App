@@ -4,6 +4,31 @@ Every item here is a deliberate decision. Nothing on Phase 1's excluded list (§
 got built. This file is meant to be complete — if you find a divergence that
 isn't listed, that's a bug in the file.
 
+## Scope: the server-side hardening went past what was agreed
+
+**Stated plainly, because it matters more than the code does.** Phase 1 was
+scoped to prove the loop works on the honour system (§7: "Phase 1's real
+enforcement is visibility"). What got built is a good deal more than that: the
+ledger's rules are enforced in Postgres, not merely recorded. Three rounds of
+adversarial review drove that, and each round was iterated on a database nobody
+had ever logged into — hardening ahead of a single real use of the app, which is
+the wrong order and cost time that should have gone to getting it running.
+
+What exists, and stays: minutes can only be created by a service-role function;
+the daily cap, the double-credit guard and the full-completion bonus run inside
+the crediting transaction; sessions lock the balance row; the client's write
+surface is column-level grants on `tasks` and `app_config` plus read-only
+`daily_state`; "today" is derived from the server clock and a stored timezone,
+with a high-water mark so days only run forwards.
+
+What is accepted as residual, per §7 and the project owner's decision: anything
+still reachable from a SQL console or with the project's own service key. There
+is one user, and he owns the project. `credit_manual_task` remains
+client-callable by design. A determined timezone change can still shift one
+day's earnings forward, at the cost of the day being left. None of this is
+defended against further; it is logged, counted in the weekly review, and left
+visible. That is what §7 asked for.
+
 ## Naming
 
 **§ title — "EarnedTime (working title, rename it)."** Shipped as **Scrip**:

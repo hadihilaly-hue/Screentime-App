@@ -27,6 +27,11 @@ the Supabase anon key, which is protected by Row Level Security.
 
 ### 1. Supabase project
 
+If your database already has an earlier version of this schema, do **not** run
+`db push` — run `supabase/catch-up.sql` in the SQL editor instead. It is
+idempotent and brings a database created from the first published schema up to
+the current one.
+
 ```bash
 npm install -g supabase
 supabase login
