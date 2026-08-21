@@ -109,20 +109,18 @@ a session row exists, so the insert has to come before the rules drop. Deducting
 mid-start buying the same minutes twice — and the price of that choice is a
 window where the minutes are gone and the next step fails.
 
-**The policy in that window is deliberately one-sided: it prefers overcharging
-you to opening the site for free.** A bias, not a guarantee — the known
-exception is listed at the end of this section.
+**The policy in that window leans one way on purpose: it prefers overcharging
+you to opening the site for free.** A lean, not a law — the exceptions are
+listed at the end of this section.
 
 - **The insert is rejected** → the minutes are refunded. Nothing exists yet, so
   the undo is a single write. (The refund is a compare-and-swap and can itself
   be refused if the balance moved; the page says so rather than pretending.)
 
-  **This is the one known free-unlock hole.** "Rejected" is inferred from the
-  call throwing, and an insert that commits server-side but whose response is
-  lost throws too — so the minutes come back while the session row survives, and
-  the worker will honour that row. Closing it needs the debit and the insert in
-  one transaction, which is a schema change and out of scope for Phase 1. It is
-  documented in `spend.js` at the catch that causes it.
+  "Rejected" is inferred from the call throwing, and an insert that commits
+  server-side but whose response is lost throws too — so a refund is attempted
+  while the session row survives, and if that refund lands the worker will still
+  honour the row. See **Known holes** below.
 - **The release is definitively refused** → **the minutes stay spent.** Two
   things count as definitive, and both cost the minutes:
   - the browser rejecting the rules write, so the old rules survive; and
@@ -132,18 +130,35 @@ exception is listed at the end of this section.
     the outcome is identical (paid, still outside), so the policy is identical
     rather than a quiet exception.
 
-  Instead of a refund, the session row is **closed** — attempted up to five
-  times with backoff (500ms doubling to 4s) — so the tap cannot unlock the site
-  later on a check that does succeed. That is an attempt, not a guarantee: if
-  all five fail, or the row cannot be confirmed closed, the block page says so,
-  and the session may still unlock the site on a later check before it expires
-  on its own. What it never does is claim a close it could not verify.
+  Instead of a refund, closing the session row is **attempted** — up to five
+  times with backoff (500ms doubling to 4s) — to stop the tap unlocking the site
+  on a later sync that succeeds. An attempt, not a guarantee: if all five fail,
+  or the row cannot be confirmed closed, the block page says so, and the session
+  may still unlock the site before it expires on its own. What it does not do is
+  claim a close it could not verify.
 
 Losing minutes this way is rare, visible, and recoverable by finishing another
-task. A free unlock is none of those, and it is the one thing the schedule
-exists to prevent. Two earlier attempts to refund this case produced, in order,
-a free unlock and a retry loop that reported the wrong cause — so the refund is
-gone rather than repaired.
+task. A free unlock is none of those, and it is what the schedule exists to
+prevent. Two earlier attempts to refund this case produced, in order, a free
+unlock and a retry loop that reported the wrong cause — so the refund is gone
+rather than repaired.
+
+### Known holes
+
+Listed rather than argued around. Both need the debit and the row write in one
+transaction to close properly, which is a schema change and out of scope for
+Phase 1.
+
+1. **Lost insert response.** A session insert that commits server-side but whose
+   response never arrives is indistinguishable here from one that was rejected,
+   so a refund is attempted against a session that exists. If that refund lands
+   (it is a compare-and-swap and can be refused), the minutes are back and the
+   worker will honour the row. `extension/spend.js` documents it at the catch
+   that causes it.
+2. **Nothing else currently known.** The other lost-update path — a task
+   verified in the app overwriting a block-page debit — was closed by making
+   `completeTask` a compare-and-swap too (`src/lib/db.ts`). It is listed here
+   because it existed until recently and the fix is worth not undoing.
 
 A check that simply did not finish, or a decision the worker is holding through
 its grace window, changes nothing at all: the session stands and the page keeps

@@ -90,14 +90,18 @@ window the loop is:
    with capped retries rather than guaranteed, and the block page says which
    happened, including when it could not confirm the close.
 
-   The bias is deliberate: where the economy has to fail, it should fail towards
+   The lean is deliberate: where the economy has to fail, it should fail towards
    overcharging you rather than towards a free unlock. Being short a few minutes
-   is recoverable by finishing another task; an unlock nobody paid for is the
-   thing this whole schedule exists to prevent. That is a bias and not a
-   guarantee — one hole is known and left open, because closing it needs the
-   debit and the insert in one transaction: an insert that commits but whose
-   response is lost refunds the minutes while its session row survives
-   (`extension/spend.js`). (`extension/README.md` has the exact branches.)
+   is recoverable by finishing another task; an unlock nobody paid for is what
+   this whole schedule exists to prevent.
+
+   It is a lean rather than a property the code guarantees. Both writers of the
+   balance — the extension's debit and the app's credit for a verified task —
+   are compare-and-swaps, so neither can silently overwrite the other. What is
+   still open is listed under **Known holes** in `extension/README.md`, which
+   also has the exact failure branches; the short version is that a session
+   insert whose response is lost cannot be told apart from one that failed, so
+   it can be refunded while its row survives.
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
    built today. Ending early re-blocks within the poll interval (up to a
    minute), also as built today — the app cannot signal the extension, so the

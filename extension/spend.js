@@ -151,11 +151,12 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * refund was the source of both, and it is buying very little: a definitive
  * refusal — either route — is rare, and being charged for minutes you did not get is
  * recoverable by finishing another task. A free unlock is not recoverable — it
- * is the exact thing the schedule exists to prevent — so the policy is now
- * plainly one-sided. Overcharge on failure, never underlock.
+ * is the exact thing the schedule exists to prevent — so the policy leans one
+ * way on purpose: prefer overcharging to underlocking. It is a lean, not a
+ * law; the insert path below documents the case that still goes the other way.
  *
  * That leaves one job, which is worth retrying because it is what stops the
- * session unlocking the site later on a check that does succeed: end the row.
+ * session unlocking the site on a later sync that succeeds: end the row.
  * Filtered on `ended_at=is.null`, so it can only ever close a running session,
  * never rewrite the end of a finished one (spec section 7).
  *

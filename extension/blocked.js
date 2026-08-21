@@ -447,11 +447,11 @@ async function pick(minutes) {
   if (!result.released && result.definite) {
     // Paid for, and definitively still blocked. The minutes are NOT refunded —
     // see closeRefusedSession for why that is deliberate. What is worth doing
-    // is trying to close the row, so this tap does not unlock the site later on
-    // a check that does succeed — an attempt, not a guarantee, and the message
-    // below says which of the two actually happened. The message says what actually happened, including
-    // that the minutes are gone; blaming something else, or promising a refund
-    // that may not arrive, is worse than the honest version.
+    // is trying to close the row, so this tap does not unlock the site on a
+    // later sync that succeeds. It is an attempt, not a guarantee, and the
+    // message below says which of the two happened — including that the minutes
+    // are gone. Blaming something else, or promising a refund that may not
+    // arrive, is worse than the honest version.
     closing = true
     renderWindow()
     el('spend-hint').textContent = 'Closing the session that was refused…'

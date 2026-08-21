@@ -162,24 +162,80 @@ export async function cancelTask(id: string): Promise<void> {
 
 // --- balances --------------------------------------------------------------
 
-export async function getBalance(userId: string): Promise<Balance> {
+/** Today's balance row, or null when the day has none yet. */
+async function readBalanceRow(userId: string): Promise<Balance | null> {
   const db = requireClient()
-  const date = todayISO()
   const { data, error } = await db
     .from('balances')
     .select('*')
     .eq('user_id', userId)
-    .eq('date', date)
+    .eq('date', todayISO())
     .maybeSingle()
   if (error) throw error
-  if (data) return data as Balance
+  return (data as Balance) ?? null
+}
+
+export async function getBalance(userId: string): Promise<Balance> {
+  const row = await readBalanceRow(userId)
+  if (row) return row
   return {
     user_id: userId,
-    date,
+    date: todayISO(),
     minutes_available: 0,
     minutes_earned_total: 0,
     all_tasks_bonus: false,
   }
+}
+
+/**
+ * Add `granted` minutes, but only if the balance still reads as `seen`.
+ *
+ * The filters carry both values that were read, so PostgREST updates nothing if
+ * anything moved in between. Without that, this credit was a plain
+ * read-modify-write and could overwrite a debit: complete a task in the app
+ * while the block page is spending, and the write built on the pre-spend
+ * numbers puts the spent minutes back while the session row keeps running —
+ * minutes returned and the site unlocked, which is the free unlock the whole
+ * schedule exists to prevent. The extension's debit has been a compare-and-swap
+ * since it was written; this is the other half of the same balance.
+ *
+ * Returns false when the swap was refused, so the caller can re-read and retry.
+ */
+async function creditBalance(
+  userId: string,
+  seen: Balance | null,
+  granted: number,
+): Promise<boolean> {
+  const db = requireClient()
+  const date = todayISO()
+  const next = {
+    minutes_available: (seen?.minutes_available ?? 0) + granted,
+    minutes_earned_total: (seen?.minutes_earned_total ?? 0) + granted,
+    updated_at: new Date().toISOString(),
+  }
+
+  if (!seen) {
+    // No row for today yet. A plain insert rather than an upsert, so that
+    // losing the race to create it is a conflict to retry, not a blind
+    // overwrite of whatever the winner wrote.
+    const { error } = await db
+      .from('balances')
+      .insert({ user_id: userId, date, all_tasks_bonus: false, ...next })
+    if (!error) return true
+    if (error.code === '23505') return false
+    throw error
+  }
+
+  const { data, error } = await db
+    .from('balances')
+    .update(next)
+    .eq('user_id', userId)
+    .eq('date', seen.date)
+    .eq('minutes_available', seen.minutes_available)
+    .eq('minutes_earned_total', seen.minutes_earned_total)
+    .select('user_id')
+  if (error) throw error
+  return Boolean(data && data.length > 0)
 }
 
 async function writeBalance(balance: Balance): Promise<Balance> {
@@ -213,23 +269,31 @@ async function writeBalance(balance: Balance): Promise<Balance> {
  * Returns the minutes actually granted.
  */
 export async function completeTask(userId: string, task: Task): Promise<number> {
-  const balance = await getBalance(userId)
-  // DAILY_CAP_MINUTES is mirrored by the balances_daily_cap CHECK constraint in
-  // supabase/schema.sql. Tuning it (spec section 3 says to, after week 1) means
-  // changing both, or the database will reject a grant this function considers
-  // legitimate.
-  const room = Math.max(0, DAILY_CAP_MINUTES - balance.minutes_earned_total)
-  const granted = Math.min(TIER_MINUTES[task.tier], room)
-
+  // Verify first, credit second. If the credit then fails the task is done with
+  // no minutes attached, which is the safe direction to fail: minutes granted
+  // for a task that never got marked verified could be earned twice.
   await updateTask(task.id, { status: 'verified', verified_at: new Date().toISOString() })
-  if (granted > 0) {
-    await writeBalance({
-      ...balance,
-      minutes_available: balance.minutes_available + granted,
-      minutes_earned_total: balance.minutes_earned_total + granted,
-    })
+
+  // Two passes, not a loop. A second refusal means something else is actively
+  // writing this balance, and quietly winning that race is how a credit
+  // overwrites a debit. The cap is recomputed on the retry rather than reused,
+  // because the grant that beat us to it may have taken the remaining room.
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const seen = await readBalanceRow(userId)
+    // DAILY_CAP_MINUTES is mirrored by the balances_daily_cap CHECK constraint
+    // in supabase/schema.sql. Tuning it (spec section 3 says to, after week 1)
+    // means changing both, or the database will reject a grant this function
+    // considers legitimate.
+    const room = Math.max(0, DAILY_CAP_MINUTES - (seen?.minutes_earned_total ?? 0))
+    const granted = Math.min(TIER_MINUTES[task.tier], room)
+    if (granted === 0) return 0
+    if (await creditBalance(userId, seen, granted)) return granted
   }
-  return granted
+
+  throw new Error(
+    'Your balance changed while that was saving, so the minutes were not added. ' +
+      'Reload to see where it stands.',
+  )
 }
 
 // --- sessions --------------------------------------------------------------
