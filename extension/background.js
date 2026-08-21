@@ -347,6 +347,44 @@ chrome.runtime.onStartup.addListener(() => {
 })
 chrome.alarms.onAlarm.addListener(() => sync())
 
+/**
+ * The web app asking for an immediate re-check, e.g. after ending a session
+ * early. Without it the block came back on the worker's own poll, up to a
+ * minute later, and a tab you had just released yourself sat there working.
+ *
+ * **This is a hint, not an instruction, and certainly not a trust boundary.**
+ * It carries no state and is not believed: all it does is run the same sync the
+ * alarm runs, which re-reads the sessions table and decides for itself. A
+ * forged message can therefore only make the extension check Supabase sooner —
+ * the worst it can do is re-block you slightly faster. It cannot unlock
+ * anything, because nothing in this path can add to the unlock set.
+ *
+ * The reply says only whether the sync ran. It deliberately does not carry the
+ * unlock set the internal handler returns: that is for the block page, which is
+ * extension code, not for a web page.
+ *
+ * Reachable only from the origins in externally_connectable, and only when the
+ * app knows this extension's id (VITE_EXTENSION_ID). A missing or wrong id
+ * means the app's message goes nowhere and the poll remains the mechanism —
+ * which is exactly how it behaved before this existed.
+ */
+// Optional-chained on purpose. onMessageExternal only exists when the manifest
+// declares externally_connectable, and an unguarded call throws at load — which
+// kills the service worker before it writes a single rule, i.e. fails OPEN with
+// every tracked site reachable. A missing manifest key should cost the hint,
+// not the blocker.
+chrome.runtime.onMessageExternal?.addListener((message, sender, sendResponse) => {
+  if (message?.type !== 'sync-hint') return false
+  // externally_connectable already gates this, but an explicit check keeps the
+  // guarantee legible next to the code it protects.
+  if (!sender?.origin && !sender?.url) return false
+  sync().then(
+    () => sendResponse({ ok: true }),
+    () => sendResponse({ ok: false }),
+  )
+  return true
+})
+
 // The popup asks for an immediate re-check after signing in or out.
 chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
   if (message?.type === 'sync') {

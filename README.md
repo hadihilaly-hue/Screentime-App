@@ -57,6 +57,11 @@ load and shows a failure message rather than an app with no auth gate.
   installs as a standalone PWA.
 - **Laptop:** set the deployed URL as your browser homepage.
 
+Set `VITE_EXTENSION_ID` in `.env` (the id from `chrome://extensions`) so ending
+a session early re-blocks the site in about a second rather than on the
+extension's one-minute poll. It is optional — without it everything still works,
+the door just closes a little slower. See `extension/README.md`.
+
 Phase 1 is honour-system **on the phone**: the timer runs, but nothing stops
 you opening Snapchat anyway. On the **laptop** it is not — the Chrome
 extension in `extension/` redirects the tracked sites to a block page. See

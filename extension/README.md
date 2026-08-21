@@ -62,11 +62,28 @@ you.
    - Turn on **Developer mode** (top right)
    - **Load unpacked** → select this `extension/` folder
 
-3. **Sign in.** Click the extension icon and enter the same email and password
+3. **Let the app reach it (optional, but it is the difference between a
+   two-second re-block and a one-minute one).** Copy the extension's id from its
+   card on `chrome://extensions` and put it in the web app's `.env`:
+
+   ```
+   VITE_EXTENSION_ID=the-long-lowercase-id
+   ```
+
+   Then restart the dev server (Vite inlines env vars at build time). If you
+   host the app somewhere other than localhost, also add that origin to
+   `externally_connectable.matches` in `manifest.json` and reload the extension.
+
+   Skip this and nothing breaks: the app never sends the hint, and the worker
+   re-blocks on its own poll exactly as it did before.
+
+4. **Sign in.** Click the extension icon and enter the same email and password
    as the web app. There is no signup here. The session is stored in extension
    storage and refreshed automatically, so this is a one-time step.
 
-After any edit to `config.js`, hit **Reload** on the extension card.
+After any edit to `config.js` or `manifest.json`, hit **Reload** on the
+extension card. Reloading changes the extension's id only if you loaded it from
+a different folder — otherwise `VITE_EXTENSION_ID` stays valid.
 
 ## Confirming you are running the latest code
 
@@ -255,6 +272,15 @@ refresh a few seconds later cannot overwrite the message worth reading.
   safer half of the pair), and the block page's diagnostics say
   `LAST RULES WRITE FAILED`, so the symptom is not just sites quietly not
   blocking.
+- **Ending a session early re-blocks in about a second**, not on the next poll.
+  The app sends a `sync-hint` message to the extension id it was configured
+  with, and the worker runs the same sync the alarm runs. The hint is a hint:
+  it carries no state, the worker still re-reads Supabase and decides for
+  itself, and the reply says only whether the sync ran. A forged message can
+  therefore make the extension check sooner and nothing else — there is no path
+  from this message to an unlock. Without the id, or from an origin not listed
+  in `externally_connectable`, the message goes nowhere and the poll does the
+  work.
 - **It fails closed, after a grace window.** Signed out is immediate: everything
   blocks. A failed *check* — offline, or Supabase erroring — is tolerated for
   `graceFailures` consecutive polls (default 3, set it to 0 for the old
@@ -300,3 +326,6 @@ a site here is the only step.
 - The balance check when starting a session is read-then-write, like the web
   app's. Two block pages tapped in the same second could both pass it.
 - The clock comes from your machine, same as the web app.
+- The app's re-check hint is best-effort. No `VITE_EXTENSION_ID`, an origin not
+  in `externally_connectable`, a different browser, or no extension at all all
+  fall back to the poll, silently — the app never shows an error for it.

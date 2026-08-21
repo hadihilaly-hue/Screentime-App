@@ -10,6 +10,12 @@
 //     9am-6pm hard block, 6pm-midnight spend window, midnight-7am hard cutoff.
 //     The point of a schedule you cannot edit at 2pm is that you cannot edit it
 //     at 2pm.
+//   * The origins allowed to send the re-check hint live in manifest.json
+//     under externally_connectable. localhost and 127.0.0.1 are there for the
+//     dev server; add your deployed origin (e.g. "https://earnedtime.vercel.app/*")
+//     when you host the app, or ending a session early will re-block on the
+//     one-minute poll instead of in a couple of seconds. Match patterns ignore
+//     ports, so one localhost entry covers 5173, 5174 and anything else.
 //   * The always-allowed list (spec section 3B) lives in always-allowed.js —
 //     Phone, FaceTime, Messages, Lyft, Waymo, DoorDash. Anything in `sites`
 //     that matches it is dropped before a rule is ever written, so adding

@@ -109,9 +109,13 @@ window the loop is:
    from one that failed, so it can be refunded while its row survives. That list
    is what is known, not a proof that nothing else exists.
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
-   built today. Ending early re-blocks within the poll interval (up to a
-   minute), also as built today — the app cannot signal the extension, so the
-   worker notices on its next check rather than on the tap. **Eviction is
+   built today. Ending early re-blocks in about a second: the app sends the
+   extension a hint to re-check, and the worker runs its ordinary sync. The hint
+   carries no state and is not believed — the worker re-reads the sessions table
+   and decides for itself — so it can only make the check happen sooner, never
+   open anything. Without it (no extension id configured, an origin the
+   extension does not accept, a different browser) the re-block falls back to
+   the poll interval, up to a minute, as it did before. **Eviction is
    unconditional**: every check sends any tab sitting on a blocked site to the
    block page, rather than only the check that re-applies the rule. A redirect
    rule only sees network requests, and a site with a service worker can serve
@@ -169,7 +173,7 @@ left to good intentions:
 3. **Dashboard.** Minutes balance (big number) with the current window and, before 6pm, a "spendable at 6:00pm" countdown; task list with status chips (todo / pending proof / verified / rejected); streak counter. **No Start Session button** — sessions start at the block page (section 3A), so the dashboard's spend panel is a read-only explanation of when and how the balance can be spent.
 4. **Proof Capture.** In-app camera only (`getUserMedia`, or `<input type="file" accept="image/*" capture="environment">` on iOS which opens the camera directly). Client stamps capture time; server rejects files older than 2 minutes as an upload-bypass guard.
 5. **Verification Result.** Verified (minutes added, small celebration), Rejected (Claude's reason, retake), or Follow-up (one question about the content, your typed answer goes back to Claude for a final verdict).
-6. **Active Session.** Full-screen countdown for the app whose site you opened. Reached by *having* a running session, not by starting one here. The countdown is clamped to the end of the spend window, so a session started at 11:55pm shows five minutes, not twenty — the same clamp the extension applies to the unlock. "Time's up" state requires a tap to acknowledge and logs the session; ending early logs it too, and the site re-blocks on the extension's next check (up to a minute later).
+6. **Active Session.** Full-screen countdown for the app whose site you opened. Reached by *having* a running session, not by starting one here. The countdown is clamped to the end of the spend window, so a session started at 11:55pm shows five minutes, not twenty — the same clamp the extension applies to the unlock. "Time's up" state requires a tap to acknowledge and logs the session; ending early logs it too, and the site re-blocks in about a second (the app tells the extension to re-check; without that configured, on its next poll).
 7. **Weekly Review.** Every Sunday: completion rate, minutes earned vs. spent per app, tier overrides, late-added tasks, and a short Claude-written observation of your patterns with one suggested rule change for next week.
 
 **8. Block page (`extension/blocked.html`).** Not a web-app route — it is what a

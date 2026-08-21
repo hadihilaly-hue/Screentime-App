@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EarnedTime Blocker",
-  "version": "0.4.0",
+  "version": "0.5.0",
   "description": "Blocks the tracked sites on the EarnedTime schedule, and unlocks one when you spend minutes on it.",
   "permissions": [
     "declarativeNetRequest",
@@ -12,6 +12,12 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost/*",
+      "http://127.0.0.1/*"
+    ]
+  },
   "background": {
     "service_worker": "background.js",
     "type": "module"

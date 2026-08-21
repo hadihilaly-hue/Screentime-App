@@ -2,6 +2,7 @@ import { requireClient } from './supabase'
 import { DAILY_CAP_MINUTES, TIER_MINUTES, isAlwaysAllowed, type Tier } from './constants'
 import { todayISO } from './date'
 import { canSpend } from './schedule'
+import { notifyExtension } from './extension'
 
 export type TaskStatus = 'todo' | 'pending' | 'verified' | 'rejected' | 'cancelled'
 
@@ -434,6 +435,12 @@ export async function endSession(id: string): Promise<void> {
     .select('id')
   if (error) throw error
   if (!data || data.length === 0) throw new Error('Could not close that session.')
+
+  // Tell the extension to re-check now rather than on its next poll. Ending a
+  // session early used to leave the site working for up to a minute, because
+  // nothing told the worker anything had changed. Best-effort: no extension, no
+  // id, or a failed send all fall back to the poll, silently (see extension.ts).
+  notifyExtension()
 }
 
 export async function listSessions(userId: string): Promise<AppSession[]> {
