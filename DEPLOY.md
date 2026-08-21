@@ -263,6 +263,10 @@ Two iOS quirks worth knowing:
   real, they hit the same Supabase project, and they write the same rows — so
   minutes earned on a preview URL are the same minutes. Treat them as the live
   app, not a sandbox.
-- **Vercel does not deploy anything to Supabase.** The schema, its RLS policies
-  and your user account are set up in the Supabase dashboard, once, and are not
-  touched by a deploy here. See the repo's [`README.md`](README.md).
+- **Vercel does not deploy anything to Supabase.** The schema, its RLS policies,
+  the `proofs` storage bucket, the `verify-proof` Edge Function and your user
+  account are all set up on the Supabase side, once, and are not touched by a
+  deploy here. See the repo's [`README.md`](README.md) and
+  [`supabase/PROOF-SETUP.md`](supabase/PROOF-SETUP.md). Deploying the app
+  without them leaves proof submission failing visibly rather than quietly
+  passing tasks.

@@ -6,6 +6,17 @@ import { notifyExtension } from './extension'
 
 export type TaskStatus = 'todo' | 'pending' | 'verified' | 'rejected' | 'cancelled'
 
+/**
+ * What Claude said about a task's photos.
+ *
+ * Deliberately not the same thing as TaskStatus. Status is the economy's state
+ * machine, claimed by the compare-and-swap in completeTask; this is the
+ * verification's own answer, and it decides whether that claim is allowed to be
+ * attempted at all. Written only by the verify-proof Edge Function — the
+ * browser is not granted UPDATE on these columns (supabase/migration-05).
+ */
+export type Verdict = 'verified' | 'rejected' | 'needs_followup'
+
 export interface Task {
   id: string
   user_id: string
@@ -15,8 +26,14 @@ export interface Task {
   status: TaskStatus
   claude_suggested_tier: Tier | null
   proof_hint: string | null
+  /** Storage paths in the private `proofs` bucket, not public URLs. */
   proof_urls: string[]
+  verification_verdict: Verdict | null
+  /** Claude's one-line reason for the verdict. */
   verification_notes: string | null
+  followup_question: string | null
+  followup_answer: string | null
+  verified_by_ai_at: string | null
   created_after_confirmation: boolean
   edited_after_confirmation: boolean
   verified_at: string | null
@@ -101,6 +118,20 @@ export async function listTasks(userId: string): Promise<Task[]> {
     .order('created_at', { ascending: true })
   if (error) throw error
   return (data ?? []) as Task[]
+}
+
+/**
+ * One task by id, or null.
+ *
+ * Not filtered by date: the proof and verification screens are reached by a
+ * route parameter and have to be able to load the task that route names, even
+ * if the clock has since rolled past midnight while the photo was being taken.
+ */
+export async function getTask(id: string): Promise<Task | null> {
+  const db = requireClient()
+  const { data, error } = await db.from('tasks').select('*').eq('id', id).maybeSingle()
+  if (error) throw error
+  return (data as Task) ?? null
 }
 
 export async function addTasks(

@@ -15,10 +15,23 @@ built. Full spec in [`phase-1-spec.md`](phase-1-spec.md).
    a fresh project you skip all of them; on an existing one, run the ones newer
    than your database, in numeric order. All are idempotent.
 
+   **Except migration 06** — the `proofs` storage bucket and its policies are
+   not part of `schema.sql` (they live in the `storage` schema, not `public`),
+   so every project runs that one. See step 4.
+
 2. **Create your user** under Authentication → Users → Add user (email +
    password, confirmed). There is no signup flow; this app has one account.
 
-3. **Configure the app:**
+3. **Set up proof verification** — the storage bucket, the Anthropic key and
+   the `verify-proof` Edge Function, in
+   [`supabase/PROOF-SETUP.md`](supabase/PROOF-SETUP.md). Written for someone
+   who has never opened the Supabase CLI.
+
+   Skipping it leaves the app working and honest: tapping Complete still opens
+   proof capture, and submitting says plainly that nothing could be verified. No
+   task is ever marked done by a failure.
+
+4. **Configure the app:**
 
    ```sh
    cp .env.example .env      # then fill in both values
@@ -55,8 +68,9 @@ Vite inlines env vars at build time, so **set them before the build and
 redeploy after changing them**. A production build missing either one throws on
 load and shows a failure message rather than an app with no auth gate.
 
-Deploying the app deploys nothing to Supabase. The schema and its policies are
-set up separately, in the SQL editor (see **Setup** above).
+Deploying the app deploys nothing to Supabase. The schema, the `proofs` bucket
+and the `verify-proof` Edge Function are set up separately — see **Setup** above
+and [`supabase/PROOF-SETUP.md`](supabase/PROOF-SETUP.md).
 
 ## Using it
 
@@ -114,7 +128,23 @@ Landed after Weekend 1, out of order:
   app and the extension
 - Sessions start at the block page, with a quote on it
 
-Not built yet (Weekend 2):
+Landed from Weekend 2:
 
-- Voice input, Claude task structuring, proof capture, Claude Vision
-  verification, full-completion bonus, streak counter, weekly review
+- Proof capture — tapping Complete opens the camera instead of crediting;
+  one to three photos, downscaled to ~1 MB each in the browser, into a private
+  Storage bucket
+- Claude Vision verification — the `verify-proof` Edge Function, three verdicts
+  (verified / not verified / one follow-up question you answer in the app), and
+  a fourth state for "this did not happen" that never passes or fails a task by
+  accident
+- Three verification attempts per task per day, counted server-side
+
+The verifier is **lenient** on purpose — it verifies unless the photos clearly
+do not match, and asks rather than rejects when unsure. That is a deliberate
+departure from spec section 6b; the reasoning is in the Edge Function, and the
+dial is one string.
+
+Not built yet:
+
+- Voice input, Claude task structuring, full-completion bonus, streak counter,
+  weekly review

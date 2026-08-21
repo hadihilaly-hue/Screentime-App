@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import {
-  completeTask,
   getActiveSession,
   getBalance,
   listTasks,
@@ -26,26 +25,37 @@ const STATUS_LABEL: Record<Task['status'], string> = {
   cancelled: 'cancelled',
 }
 
+/**
+ * What a task's chip says.
+ *
+ * status and verification_verdict are separate columns on purpose (the verdict
+ * is server-written; status is claimed by the credit's compare-and-swap), and
+ * until the credit lands a task Claude rejected is still status 'todo'. Reading
+ * the verdict first is what stops the list saying "todo" about a task that has
+ * a question waiting on it.
+ */
+function statusLabel(task: Task): string {
+  if (task.status === 'verified' || task.status === 'cancelled') return STATUS_LABEL[task.status]
+  if (task.verification_verdict === 'needs_followup') return 'one question waiting'
+  if (task.verification_verdict === 'rejected') return 'not verified — retake'
+  if (task.verification_verdict === 'verified') return 'verified — minutes not added'
+  return STATUS_LABEL[task.status]
+}
+
 /** Spec section 4 screen 3. */
 export default function Dashboard({ userId }: { userId: string }) {
   const [tasks, setTasks] = useState<Task[]>([])
   const [balance, setBalance] = useState<Balance | null>(null)
   const [now, setNow] = useState(() => Date.now())
   const [error, setError] = useState<string | null>(null)
-  const [notice, setNotice] = useState<string | null>(null)
-  const [busy, setBusy] = useState(false)
-  // Mirrors `busy` for the poll below, which must not re-read the balance
-  // mid-write. A ref rather than the state value so the interval is not torn
-  // down and rebuilt every time a task is completed.
-  const busyRef = useRef(false)
   /**
    * Which reload is allowed to write to state.
    *
-   * The busy ref alone only stops a poll that has not started yet. One already
-   * awaiting getBalance when you tap Complete resolves *after* the completion's
-   * own reload and put the pre-completion balance back, so the number you had
-   * just earned vanished for up to ten seconds. Every reload takes a ticket and
-   * drops its results if a newer one has been issued since.
+   * A poll already awaiting getBalance when this screen navigates away resolves
+   * afterwards and writes into a screen on its way out. Every reload takes a
+   * ticket and drops its results if a newer one has been issued since. This
+   * mattered more when the dashboard credited tasks itself; it still matters,
+   * because the poll and the navigation to proof capture can overlap.
    */
   const reloadSeq = useRef(0)
   /**
@@ -53,8 +63,8 @@ export default function Dashboard({ userId }: { userId: string }) {
    *
    * 'poll' clears when a poll succeeds; 'action' persists until the next action
    * and is never overwritten by a poll — a poll runs every ten seconds, and
-   * losing the reason a task refused to complete under a transient network
-   * blip is worse than showing nothing about the blip.
+   * losing the reason something refused under a transient network blip is worse
+   * than showing nothing about the blip.
    */
   const errorSource = useRef<'poll' | 'action' | null>(null)
   const navigate = useNavigate()
@@ -111,7 +121,7 @@ export default function Dashboard({ userId }: { userId: string }) {
   useEffect(() => {
     const tick = () => {
       setNow(Date.now())
-      if (!busyRef.current) void reload()
+      void reload()
     }
     const id = setInterval(tick, 10_000)
     const onVisible = () => {
@@ -126,37 +136,23 @@ export default function Dashboard({ userId }: { userId: string }) {
     }
   }, [reload])
 
-  async function onComplete(task: Task) {
-    busyRef.current = true
-    setBusy(true)
-    // Invalidate any reload already in flight: one that resolves during
-    // completeTask below would otherwise pass its staleness check and write the
-    // pre-completion balance back, or navigate away mid-write.
+  /**
+   * Tapping the check no longer completes anything.
+   *
+   * Since proof capture landed, the only route from todo to verified runs
+   * through photos and the verify-proof Edge Function (spec section 2 step 4).
+   * This screen's job is to hand the task over; the credit still happens in
+   * completeTask, called from lib/proof once a verdict comes back verified.
+   */
+  function openProof(task: Task) {
+    // Invalidate any reload in flight so it cannot write into a screen that is
+    // on its way out.
     reloadSeq.current++
-    errorSource.current = null
-    setError(null)
-    setNotice(null)
-    try {
-      const granted = await completeTask(userId, task)
-      // Silently not moving the balance is the expected end state of a
-      // productive day, so it has to be said out loud rather than looking broken.
-      if (granted === 0) {
-        setNotice(`Done — but you have hit the ${DAILY_CAP_MINUTES} minute daily cap, so no minutes were added.`)
-      } else if (granted < TIER_MINUTES[task.tier]) {
-        setNotice(`Done — ${granted} min added instead of ${TIER_MINUTES[task.tier]}, the daily cap is close.`)
-      }
-    } catch (e) {
-      errorSource.current = 'action'
-      setError((e as Error).message)
+    if (task.verification_verdict === 'needs_followup') {
+      navigate(`/verification/${task.id}`)
+      return
     }
-
-    // Refreshed whether or not the write threw. A completeTask that fails part
-    // way can still have marked the task verified — leaving it rendered as todo
-    // with the button live is what invited the second tap in the first place.
-    // reload() handles its own errors and will not overwrite the banner above.
-    await reload()
-    busyRef.current = false
-    setBusy(false)
+    navigate(`/proof/${task.id}`)
   }
 
   if (!balance) return <Spinner />
@@ -219,7 +215,6 @@ export default function Dashboard({ userId }: { userId: string }) {
         </div>
       </div>
 
-      {notice && <p className="banner banner-warn mb-4">{notice}</p>}
       {error && <p className="banner banner-error mb-4">{error}</p>}
 
       {/* --- tasks --------------------------------------------------------- */}
@@ -258,7 +253,7 @@ export default function Dashboard({ userId }: { userId: string }) {
                           {TIER_MINUTES[task.tier]}m
                         </span>
                         <span className="text-[0.75rem] text-faint">
-                          · {STATUS_LABEL[task.status]}
+                          · {statusLabel(task)}
                         </span>
                         {task.created_after_confirmation && (
                           <span className="tag tag-warn">added late</span>
@@ -270,9 +265,8 @@ export default function Dashboard({ userId }: { userId: string }) {
                     </div>
                     {task.status === 'todo' && (
                       <button
-                        aria-label={`Mark "${task.title}" done`}
-                        disabled={busy}
-                        onClick={() => onComplete(task)}
+                        aria-label={`Submit proof for "${task.title}"`}
+                        onClick={() => openProof(task)}
                         className="press flex h-11 w-11 shrink-0 items-center justify-center rounded-full border border-line text-faint disabled:opacity-40 active:border-acid active:bg-acid active:text-ink"
                       >
                         <IconCheck />

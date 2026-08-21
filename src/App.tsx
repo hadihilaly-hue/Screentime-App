@@ -76,8 +76,11 @@ function SignedIn({ userId }: { userId: string }) {
       <Route path="/review" element={<TaskReview userId={userId} day={day} onConfirmed={setDay} />} />
       <Route path="/dashboard" element={gated(<Dashboard userId={userId} />)} />
       <Route path="/session" element={gated(<ActiveSession userId={userId} />)} />
-      <Route path="/proof" element={gated(<ProofCapture />)} />
-      <Route path="/verification" element={gated(<VerificationResult />)} />
+      {/* Both carry the task in the path: proof capture and its result are
+          always about one task, and a reload has to be able to find its way
+          back to the same one. */}
+      <Route path="/proof/:taskId" element={gated(<ProofCapture />)} />
+      <Route path="/verification/:taskId" element={gated(<VerificationResult />)} />
       <Route path="/weekly" element={gated(<WeeklyReview />)} />
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>

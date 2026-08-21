@@ -20,7 +20,17 @@ create table if not exists public.tasks (
   claude_suggested_tier     smallint    check (claude_suggested_tier in (1, 2, 3)),
   proof_hint                text,
   proof_urls                text[]      not null default '{}',
+  -- What Claude said about the photos. Deliberately separate from `status`:
+  -- status is the economy's state machine and is claimed by a compare-and-swap
+  -- in completeTask, this is the verdict that decides whether that claim is
+  -- allowed to be attempted at all. Written only by the verify-proof Edge
+  -- Function (see the column grants at the bottom of this file).
+  verification_verdict      text        check (verification_verdict is null
+                                        or verification_verdict in ('verified', 'rejected', 'needs_followup')),
   verification_notes        text,
+  followup_question         text,
+  followup_answer           text,
+  verified_by_ai_at         timestamptz,
   created_after_confirmation boolean    not null default false,
   edited_after_confirmation  boolean    not null default false,
   verified_at               timestamptz,
@@ -70,14 +80,40 @@ create table if not exists public.daily_state (
   primary key (user_id, date)
 );
 
+-- ---------------------------------------------------------------------------
+-- verification_attempts  (one row per proof verification that reached Claude)
+-- ---------------------------------------------------------------------------
+-- Two jobs: it is the counter behind the three-attempts-per-task-per-day cost
+-- guard, and it is the record of what was tried (spec section 7).
+create table if not exists public.verification_attempts (
+  id          uuid        primary key default gen_random_uuid(),
+  user_id     uuid        not null references auth.users (id) on delete cascade,
+  task_id     uuid        not null references public.tasks (id) on delete cascade,
+  -- Named `day`, not `date`, because unlike every other date column here it is
+  -- the DATABASE's date (UTC), not the user's local one. It has to be: a guard
+  -- that resets when the phone's clock says so is not a guard. The three
+  -- attempts therefore reset at UTC midnight rather than at yours. This is a
+  -- cost ceiling, not part of the section 3A schedule, so that seam is fine.
+  day         date        not null default current_date,
+  verdict     text,
+  reason      text,
+  photo_count smallint,
+  is_followup boolean     not null default false,
+  created_at  timestamptz not null default now()
+);
+
+create index if not exists verification_attempts_task_day_idx
+  on public.verification_attempts (task_id, day);
+
 -- ============================================================================
 -- Row Level Security — every policy keyed to the authenticated user
 -- ============================================================================
 
-alter table public.tasks       enable row level security;
-alter table public.balances    enable row level security;
-alter table public.sessions    enable row level security;
-alter table public.daily_state enable row level security;
+alter table public.tasks                 enable row level security;
+alter table public.balances              enable row level security;
+alter table public.sessions              enable row level security;
+alter table public.daily_state           enable row level security;
+alter table public.verification_attempts enable row level security;
 
 -- tasks: select/insert/update on your own rows. DELETE is allowed only while
 -- the day's list is unconfirmed (spec section 4.2 lets you delete during Task
@@ -168,3 +204,48 @@ drop policy if exists daily_state_update on public.daily_state;
 create policy daily_state_update on public.daily_state
   for update using ((select auth.uid()) = user_id and not list_confirmed)
                  with check ((select auth.uid()) = user_id);
+
+-- verification_attempts: read your own, and nothing else. The absence of an
+-- insert, update and delete policy is the point — an ordinary signed-in client
+-- cannot add, edit or remove a row. Only the verify-proof Edge Function can,
+-- because it writes with the service_role key, which bypasses RLS. If the
+-- client could write here, the daily attempt guard would be advisory: you would
+-- delete three rows and start again.
+drop policy if exists verification_attempts_select on public.verification_attempts;
+create policy verification_attempts_select on public.verification_attempts
+  for select using ((select auth.uid()) = user_id);
+
+-- ============================================================================
+-- Column privileges — the verdict is server-written
+-- ============================================================================
+-- RLS is row-level: it can say "this row is yours", never "this column is not".
+-- Without the two statements below, verification_verdict is a field the browser
+-- can PATCH to 'verified' directly, which would make the Edge Function
+-- decorative. So table-wide UPDATE comes off `authenticated`, and exactly the
+-- columns the app writes go back on.
+--
+-- Adding a column the app needs to update means adding it to this list too.
+-- Forgetting shows up as a loud "permission denied for column …" from
+-- PostgREST rather than as a silent no-op.
+--
+-- TO UNDO: grant update on public.tasks to authenticated;
+revoke update on public.tasks from authenticated;
+grant update (
+  title,
+  tier,
+  status,
+  claude_suggested_tier,
+  proof_hint,
+  proof_urls,
+  created_after_confirmation,
+  edited_after_confirmation,
+  verified_at
+) on public.tasks to authenticated;
+
+-- ============================================================================
+-- Storage
+-- ============================================================================
+-- The `proofs` bucket and its four policies live in
+-- supabase/migration-06-proofs-bucket.sql rather than here, because they write
+-- to the `storage` schema and can fail on their own permission grounds. Run
+-- that file too — proof submission has nowhere to put a photo without it.
