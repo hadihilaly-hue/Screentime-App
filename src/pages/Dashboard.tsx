@@ -148,7 +148,16 @@ export default function Dashboard({ userId }: { userId: string }) {
     // Invalidate any reload in flight so it cannot write into a screen that is
     // on its way out.
     reloadSeq.current++
-    if (task.verification_verdict === 'needs_followup') {
+    // Two verdicts already have an answer waiting and must not be sent back to
+    // the camera. A pending question is answered with a sentence. A verdict of
+    // verified whose credit did not land needs the credit retried, not new
+    // photos — re-photographing it would spend one of the day's three attempts
+    // and could replace a verdict of verified with a rejection, which is a
+    // spectacularly bad trade for a task Claude has already passed.
+    if (
+      task.verification_verdict === 'needs_followup' ||
+      task.verification_verdict === 'verified'
+    ) {
       navigate(`/verification/${task.id}`)
       return
     }

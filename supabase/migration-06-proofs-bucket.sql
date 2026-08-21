@@ -57,8 +57,11 @@ create policy proofs_insert on storage.objects
     and (storage.foldername(name))[1] = (select auth.uid())::text
   );
 
--- Read back — the thumbnails on the capture screen, and any signed URL the app
--- asks for.
+-- Read back. Not for the thumbnails — those are local blob URLs made from the
+-- photo before it is ever uploaded, and never come from Storage. This exists
+-- because the app LISTS this folder before every submission, to clear the
+-- previous attempt's photos (clearFolder in src/lib/proof.ts), and a list is a
+-- select. It is also what any signed URL would need.
 drop policy if exists proofs_select on storage.objects;
 create policy proofs_select on storage.objects
   for select to authenticated

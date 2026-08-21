@@ -223,6 +223,27 @@ export default function VerificationResult() {
           The answer goes back with the photos for a final verified or not-verified. It uses one of
           this task's verification attempts for today.
         </p>
+
+        {/* The way out of an unanswerable question.
+            A blurry photo can produce a question about something you genuinely
+            cannot see, and without this the only route to a camera was to
+            answer wrongly, collect the rejection, and retake from there — which
+            spends the same attempt and leaves a rejection on the record for
+            work that was done. Retaking costs one attempt, same as answering,
+            and the count above is what it costs it from. */}
+        <button
+          onClick={() => navigate(`/proof/${taskId}?retake=1`)}
+          disabled={busy}
+          className="press btn btn-secondary mt-3 w-full"
+        >
+          <IconCamera />
+          Take new photos instead
+        </button>
+        <p className="mt-2 text-[0.75rem] leading-snug text-faint">
+          Use this if the question is about something the photos do not show. New photos replace the
+          question, and cost one attempt just as answering does.
+        </p>
+
         {attemptsLine}
         {toDashboard}
       </Screen>

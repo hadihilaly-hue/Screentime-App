@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { useNavigate, useParams } from 'react-router-dom'
+import { useNavigate, useParams, useSearchParams } from 'react-router-dom'
 import { getTask, type Task } from '../lib/db'
 import { downscale } from '../lib/image'
 import { MAX_PHOTOS, isOffline, submitProof, type ProofOutcome } from '../lib/proof'
@@ -28,6 +28,13 @@ const kb = (bytes: number) => `${Math.round(bytes / 1024)} KB`
 export default function ProofCapture() {
   const { taskId = '' } = useParams()
   const navigate = useNavigate()
+  /**
+   * `?retake=1` — deliberately choosing new photos over answering the question
+   * this task is waiting on. In the query string rather than router state so a
+   * reload does not bounce straight back to the question.
+   */
+  const [params] = useSearchParams()
+  const retakingOverQuestion = params.get('retake') === '1'
 
   const [task, setTask] = useState<Task | null>(null)
   const [loadError, setLoadError] = useState<string | null>(null)
@@ -52,9 +59,23 @@ export default function ProofCapture() {
           setLoadError('That task could not be found.')
           return
         }
-        // A task that already has a question waiting belongs on the other
-        // screen — answering it is cheaper than another three photos.
-        if (t.verification_verdict === 'needs_followup' && t.status !== 'verified') {
+        // A task with a question waiting belongs on the other screen by
+        // default — answering a sentence is cheaper than another three photos.
+        // Unless the question cannot be answered, which is the case ?retake=1
+        // exists for: a blurry photo can produce a question about something you
+        // genuinely cannot see, and without this the only way out was to answer
+        // it wrongly, collect the rejection, and only then be allowed a camera.
+        if (
+          t.verification_verdict === 'needs_followup' &&
+          t.status !== 'verified' &&
+          !retakingOverQuestion
+        ) {
+          navigate(`/verification/${taskId}`, { replace: true })
+          return
+        }
+        // Same reasoning as the dashboard's: a verdict of verified whose credit
+        // never landed needs the credit retried, not new photos.
+        if (t.verification_verdict === 'verified' && t.status !== 'verified') {
           navigate(`/verification/${taskId}`, { replace: true })
           return
         }
@@ -64,7 +85,7 @@ export default function ProofCapture() {
     return () => {
       cancelled = true
     }
-  }, [taskId, navigate])
+  }, [taskId, navigate, retakingOverQuestion])
 
   // Object URLs are only freed on unmount and on explicit removal; a photo that
   // is still on screen still needs its URL.
@@ -177,10 +198,11 @@ export default function ProofCapture() {
 
   const busy = stage !== 'idle'
   const retry = task.verification_verdict === 'rejected'
+  const abandoningQuestion = retakingOverQuestion && task.verification_verdict === 'needs_followup'
 
   return (
     <Screen
-      eyebrow={retry ? 'Proof · second try' : 'Proof'}
+      eyebrow={retry || abandoningQuestion ? 'Proof · second try' : 'Proof'}
       title={task.title}
       subtitle={
         <>
@@ -197,6 +219,21 @@ export default function ProofCapture() {
         <p className="banner banner-warn mb-4">
           Last time: {task.verification_notes}
         </p>
+      )}
+
+      {abandoningQuestion && (
+        <>
+          <p className="banner banner-warn mb-2">
+            New photos replace the question “{task.followup_question}” — you will not be asked it
+            again. Submitting uses one of this task's verification attempts for today.
+          </p>
+          <button
+            onClick={() => navigate(`/verification/${taskId}`, { replace: true })}
+            className="press btn btn-ghost mb-4 w-full"
+          >
+            Answer the question instead
+          </button>
+        </>
       )}
 
       <input

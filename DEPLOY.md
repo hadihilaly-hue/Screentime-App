@@ -203,9 +203,9 @@ the extension keeps blocking correctly with neither.
    dashboardUrl: 'https://screentime-app.vercel.app/dashboard',
    ```
 
-2. `extension/manifest.json` → find the line marked `PLACEHOLDER` under
-   `externally_connectable.matches` and replace it with your real origin. Keep
-   the `https` and the trailing `/*`:
+2. `extension/manifest.json` → under `externally_connectable.matches`, replace
+   the `replace-with-your-vercel-domain.example.invalid` line with your real
+   origin. Keep the `https` and the trailing `/*`:
 
    ```json
    "https://screentime-app.vercel.app/*"

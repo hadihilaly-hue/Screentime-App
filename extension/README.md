@@ -80,30 +80,41 @@ you.
    not a runtime setting.
 
    **b. The app's origin, in the extension.** `manifest.json` lists the origins
-   allowed to send the hint under `externally_connectable.matches`. The two
-   entries it ships with are **http**, because they are the Vite dev server:
+   allowed to send the hint under `externally_connectable.matches`. It ships
+   with three:
 
    ```json
-   "http://localhost/*",
-   "http://127.0.0.1/*",
+   "externally_connectable": {
+     "matches": [
+       "http://localhost/*",
+       "http://127.0.0.1/*",
+       "https://replace-with-your-vercel-domain.example.invalid/*"
+     ]
+   },
    ```
 
-   A deployed app is **https**, and `https://host/*` does not match
-   `http://host/*` — different scheme, no match. So a hosted app needs its own
-   entry. There is a commented placeholder line in `manifest.json` marked
-   `PLACEHOLDER`; replace it with your real origin, keeping the `https` and the
-   trailing `/*`:
+   The first two are **http**, because they are the Vite dev server. The third
+   is a placeholder for your deployed app — **replace that whole line** with
+   your real origin, keeping the `https` and the trailing `/*`:
 
    ```json
    "https://earnedtime.vercel.app/*"
    ```
 
-   Then hit **Reload** on the extension card. Without the reload Chrome is still
-   running the old manifest, and the origin is not allowed yet — the manifest is
-   read at load time, not per message.
+   **Why the placeholder is there rather than an instruction to add a line:**
+   a deployed app is https, and `https://host/*` does not match
+   `http://host/*` — different scheme, no match — so a hosted app genuinely
+   needs its own entry, and an array with an obvious gap in it is harder to
+   overlook than a paragraph in a README. Leaving it as shipped grants nothing:
+   `.invalid` is a reserved TLD (RFC 2606) that can never be registered, so
+   there is no origin in the world that matches it.
 
-   (`manifest.json` accepts `//` comments; Chrome strips them before parsing, so
-   the notes in that file are safe to keep and safe to edit around.)
+   `manifest.json` is strict JSON with no comments, so any editor, `jq` or CI
+   JSON check reads it. That is why this explanation lives here.
+
+   After editing, hit **Reload** on the extension card. Without the reload
+   Chrome is still running the old manifest and the origin is not allowed yet —
+   the manifest is read at load time, not per message.
 
    **Skip either half and nothing breaks — it just gets slower.** No
    `VITE_EXTENSION_ID`, an origin not listed in `externally_connectable`, a

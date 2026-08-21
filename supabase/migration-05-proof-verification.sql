@@ -83,9 +83,17 @@ create policy verification_attempts_select on public.verification_attempts
 -- Function decorative.
 --
 -- So: take table-wide UPDATE away from `authenticated`, and hand back exactly
--- the columns the app writes. The four verification columns and the two
--- timestamps are not in that list, so they can only be written by the Edge
--- Function's service_role client.
+-- the six columns the app actually writes — no more. The verification columns
+-- can then only be written by the Edge Function's service_role client.
+--
+-- The list is exactly what src/ writes, not "everything that looked harmless".
+-- created_after_confirmation is the reason that distinction matters: it is the
+-- spec section 7 flag that makes a task added at 9pm visible to future-you in
+-- the weekly review, nothing in the app ever updates it (addTasks sets it on
+-- INSERT, which this revoke does not touch), and granting UPDATE on it would
+-- mean one devtools PATCH clears the evidence. proof_hint and
+-- claude_suggested_tier are out for the same reason: unwritten by the app, and
+-- both are inputs the verifier and the weekly review read.
 --
 -- NOTE FOR LATER: adding a column that the app needs to update means adding it
 -- to this grant list too. Forgetting shows up as a loud
@@ -94,15 +102,12 @@ create policy verification_attempts_select on public.verification_attempts
 -- TO UNDO all of this: grant update on public.tasks to authenticated;
 revoke update on public.tasks from authenticated;
 grant update (
-  title,
-  tier,
-  status,
-  claude_suggested_tier,
-  proof_hint,
-  proof_urls,
-  created_after_confirmation,
-  edited_after_confirmation,
-  verified_at
+  title,                      -- TaskReview, inline title edit
+  tier,                       -- TaskReview, re-tiering before confirmation
+  status,                     -- cancelTask, and claimTaskVerified's CAS
+  verified_at,                -- claimTaskVerified's CAS, same write
+  edited_after_confirmation,  -- updateTask's late-edit flag
+  proof_urls                  -- ProofCapture, after the upload
 ) on public.tasks to authenticated;
 
 -- Sanity note on what stays possible for the app after the revoke:
@@ -111,6 +116,11 @@ grant update (
 --   * cancelTask writes status                            — granted
 --   * claimTaskVerified writes status + verified_at       — granted (the CAS)
 --   * ProofCapture writes proof_urls                      — granted
---   * anything writing verification_verdict / notes /
---     followup_question / followup_answer / verified_by_ai_at
+--   * addTasks sets created_after_confirmation on INSERT  — unaffected
+--   * anything UPDATING created_after_confirmation, proof_hint,
+--     claude_suggested_tier, verification_verdict, verification_notes,
+--     followup_question, followup_answer or verified_by_ai_at
 --                                                          — denied, by design
+--
+-- Re-running this file after an earlier version repairs the grant: the revoke
+-- drops every column-level privilege, and only the six above come back.

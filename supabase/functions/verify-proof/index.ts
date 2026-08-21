@@ -322,6 +322,10 @@ Deno.serve(async (req) => {
   // flight before any of them has been logged. Serialised writes would need a
   // transaction; three-a-day does not warrant one, and the overshoot is at most
   // the number of simultaneous taps, which on one phone is one.
+  //
+  // The count is only half of it — the row that makes the next count correct is
+  // claimed below, before the API call, and a failure to write it stops the
+  // call. See "claim the attempt".
   const { count, error: countError } = await admin
     .from('verification_attempts')
     .select('id', { count: 'exact', head: true })
@@ -352,6 +356,47 @@ Deno.serve(async (req) => {
   }
   if (loaded.images.length === 0) {
     return fail(400, 'no_photos', 'No photos were found for that task. Take one and submit again.')
+  }
+
+  // --- claim the attempt ----------------------------------------------------
+  // Written BEFORE the API call, and the call is refused if it does not land.
+  //
+  // The previous shape logged the attempt afterwards and never looked at the
+  // result. Anything that broke only the insert — a constraint, a transient
+  // failure, a policy change — left the count frozen while the calls kept
+  // going, which turns a cost ceiling into a cost ceiling-shaped comment. The
+  // guard's whole job is bounding spend, so an attempt that cannot be counted
+  // is an attempt that does not happen.
+  //
+  // Deliberately after the photos are loaded: a storage failure is not a
+  // verification attempt and must not cost one. Deliberately before the API
+  // call: everything from here on may be billed, so it counts either way, and
+  // the row is filled in with the outcome once there is one.
+  const { data: claimed, error: claimError } = await admin
+    .from('verification_attempts')
+    .insert({
+      user_id: user.id,
+      task_id: taskId,
+      photo_count: loaded.images.length,
+      is_followup: isFollowup,
+      reason: 'started',
+    })
+    .select('id')
+    .single()
+  if (claimError || !claimed) {
+    return fail(
+      500,
+      'db_error',
+      `Today's attempt could not be recorded, so nothing was sent for verification: ${
+        claimError?.message ?? 'the attempt log returned no row'
+      }`,
+    )
+  }
+  const attemptId = claimed.id as string
+
+  /** Fill in the claimed row. Never fatal — the attempt is already counted. */
+  const recordOutcome = async (verdict: string | null, reason: string) => {
+    await admin.from('verification_attempts').update({ verdict, reason }).eq('id', attemptId)
   }
 
   // --- ask Claude -----------------------------------------------------------
@@ -401,18 +446,10 @@ Deno.serve(async (req) => {
     })
   } catch (e) {
     const err = e as { status?: number; message?: string }
-    // Logged as an attempt even though it produced no verdict: it is a call
-    // that may well have been billed, and the record of what was tried is the
-    // point of the table. It counts against the three, which is the honest
-    // reading of a cost guard.
-    await admin.from('verification_attempts').insert({
-      user_id: user.id,
-      task_id: taskId,
-      verdict: null,
-      reason: `api_error: ${err.message ?? 'unknown'}`,
-      photo_count: loaded.images.length,
-      is_followup: isFollowup,
-    })
+    // The attempt is already claimed and already counts against the three: it
+    // is a call that may well have been billed, which is the honest reading of
+    // a cost guard. All that is left is to say what became of it.
+    await recordOutcome(null, `api_error: ${err.message ?? 'unknown'}`)
     return fail(
       502,
       'api_error',
@@ -425,14 +462,7 @@ Deno.serve(async (req) => {
 
   const result = readVerdict(message, allowed)
   if (!result || (result.verdict === 'needs_followup' && !result.followup_question)) {
-    await admin.from('verification_attempts').insert({
-      user_id: user.id,
-      task_id: taskId,
-      verdict: null,
-      reason: 'unreadable_verdict',
-      photo_count: loaded.images.length,
-      is_followup: isFollowup,
-    })
+    await recordOutcome(null, 'unreadable_verdict')
     return fail(
       502,
       'unreadable_verdict',
@@ -454,6 +484,7 @@ Deno.serve(async (req) => {
     .eq('id', taskId)
     .eq('user_id', user.id)
   if (writeError) {
+    await recordOutcome(null, `verdict_not_saved: ${writeError.message}`)
     return fail(
       500,
       'db_error',
@@ -461,14 +492,7 @@ Deno.serve(async (req) => {
     )
   }
 
-  await admin.from('verification_attempts').insert({
-    user_id: user.id,
-    task_id: taskId,
-    verdict: result.verdict,
-    reason: result.reason,
-    photo_count: loaded.images.length,
-    is_followup: isFollowup,
-  })
+  await recordOutcome(result.verdict, result.reason)
 
   return ok({
     verdict: result.verdict,

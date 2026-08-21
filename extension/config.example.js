@@ -13,9 +13,10 @@
 //   * The origins allowed to send the re-check hint live in manifest.json
 //     under externally_connectable. The entries shipped there are http, because
 //     they are the dev server; a deployed app is https and http://host/* does
-//     not match it. There is a commented placeholder line in that file — swap it
-//     for your deployed origin (e.g. "https://earnedtime.vercel.app/*") and hit
-//     Reload on the extension card, or ending a session early will re-block on
+//     not match it. The third entry there is a placeholder on an unregistrable
+//     .invalid domain — swap that whole line for your deployed origin (e.g.
+//     "https://earnedtime.vercel.app/*") and hit Reload on the extension card,
+//     or ending a session early will re-block on
 //     the one-minute poll instead of in a couple of seconds. Match patterns
 //     ignore ports, so one localhost entry covers 5173, 5174 and anything else.
 //   * The always-allowed list (spec section 3B) lives in always-allowed.js —

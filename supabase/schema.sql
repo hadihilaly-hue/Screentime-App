@@ -222,7 +222,15 @@ create policy verification_attempts_select on public.verification_attempts
 -- Without the two statements below, verification_verdict is a field the browser
 -- can PATCH to 'verified' directly, which would make the Edge Function
 -- decorative. So table-wide UPDATE comes off `authenticated`, and exactly the
--- columns the app writes go back on.
+-- six columns the app writes go back on — no more.
+--
+-- The list is what src/ writes, not "everything harmless-looking".
+-- created_after_confirmation is why that distinction matters: it is the spec
+-- section 7 flag that makes a task added at 9pm visible in the weekly review,
+-- nothing in the app ever updates it (addTasks sets it on INSERT, which this
+-- revoke does not touch), and granting UPDATE on it would let one devtools
+-- PATCH clear the evidence. proof_hint and claude_suggested_tier are out for
+-- the same reason.
 --
 -- Adding a column the app needs to update means adding it to this list too.
 -- Forgetting shows up as a loud "permission denied for column …" from
@@ -231,15 +239,12 @@ create policy verification_attempts_select on public.verification_attempts
 -- TO UNDO: grant update on public.tasks to authenticated;
 revoke update on public.tasks from authenticated;
 grant update (
-  title,
-  tier,
-  status,
-  claude_suggested_tier,
-  proof_hint,
-  proof_urls,
-  created_after_confirmation,
-  edited_after_confirmation,
-  verified_at
+  title,                      -- TaskReview, inline title edit
+  tier,                       -- TaskReview, re-tiering before confirmation
+  status,                     -- cancelTask, and claimTaskVerified's CAS
+  verified_at,                -- claimTaskVerified's CAS, same write
+  edited_after_confirmation,  -- updateTask's late-edit flag
+  proof_urls                  -- ProofCapture, after the upload
 ) on public.tasks to authenticated;
 
 -- ============================================================================

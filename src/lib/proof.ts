@@ -18,8 +18,11 @@ import { completeTask, getTask, type Task, type Verdict } from './db'
 /** Spec section 4.4. */
 export const MAX_PHOTOS = 3
 
-/** Mirrors MAX_ATTEMPTS_PER_DAY in supabase/functions/verify-proof/index.ts. */
-export const MAX_ATTEMPTS_PER_DAY = 3
+// There is deliberately no MAX_ATTEMPTS_PER_DAY here. The limit lives in
+// supabase/functions/verify-proof/index.ts, which is the only thing that
+// enforces it; the screens render the `attempts_remaining` that comes back with
+// each verdict. A copy of the number on this side could only ever go stale, and
+// a stale copy of a limit is worse than no copy, because it reads as authority.
 
 const BUCKET = 'proofs'
 
@@ -214,7 +217,10 @@ function isOutcome(x: FunctionReply | ProofOutcome): x is ProofOutcome {
  * swallowed — VerificationResult offers to run the credit again.
  */
 async function settle(reply: FunctionReply, task: Task): Promise<ProofOutcome> {
-  const remaining = reply.attempts_remaining ?? 0
+  // null, not 0, when the field is missing. The screens omit the line entirely
+  // for null; defaulting to 0 would render "No verification attempts left on
+  // this task today" — an alarming claim about a number we do not have.
+  const remaining = reply.attempts_remaining ?? null
   const reason = reply.reason ?? ''
 
   if (reply.verdict === 'rejected') return { kind: 'rejected', reason, attemptsRemaining: remaining }
