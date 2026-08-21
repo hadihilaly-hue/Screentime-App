@@ -54,8 +54,10 @@ you.
    app's `.env`, from Project Settings → API. Use the **anon public** key.
    `config.js` is gitignored, like `.env`.
 
-   Set `dashboardUrl` to wherever you run the app (`http://localhost:5173/dashboard`
-   during development, your deployed URL once it is hosted).
+   Set `dashboardUrl` to wherever you run the app —
+   `http://localhost:5173/dashboard` during development,
+   `https://your-project.vercel.app/dashboard` once it is deployed. It is only
+   used for the "go to the dashboard" links on the block page and in the popup.
 
 2. **Load it in Chrome.**
    - Go to `chrome://extensions`
@@ -63,19 +65,59 @@ you.
    - **Load unpacked** → select this `extension/` folder
 
 3. **Let the app reach it (optional, but it is the difference between a
-   two-second re-block and a one-minute one).** Copy the extension's id from its
-   card on `chrome://extensions` and put it in the web app's `.env`:
+   two-second re-block and a one-minute one).** This takes two settings, one on
+   each side, and **both** are required — either one alone does nothing.
+
+   **a. The extension's id, in the app.** Copy it from the extension's card on
+   `chrome://extensions` and put it in the web app's `.env`:
 
    ```
    VITE_EXTENSION_ID=the-long-lowercase-id
    ```
 
-   Then restart the dev server (Vite inlines env vars at build time). If you
-   host the app somewhere other than localhost, also add that origin to
-   `externally_connectable.matches` in `manifest.json` and reload the extension.
+   Then restart the dev server, or redeploy — Vite inlines env vars at build
+   time, so on Vercel this is an environment variable plus a fresh deployment,
+   not a runtime setting.
 
-   Skip this and nothing breaks: the app never sends the hint, and the worker
-   re-blocks on its own poll exactly as it did before.
+   **b. The app's origin, in the extension.** `manifest.json` lists the origins
+   allowed to send the hint under `externally_connectable.matches`. The two
+   entries it ships with are **http**, because they are the Vite dev server:
+
+   ```json
+   "http://localhost/*",
+   "http://127.0.0.1/*",
+   ```
+
+   A deployed app is **https**, and `https://host/*` does not match
+   `http://host/*` — different scheme, no match. So a hosted app needs its own
+   entry. There is a commented placeholder line in `manifest.json` marked
+   `PLACEHOLDER`; replace it with your real origin, keeping the `https` and the
+   trailing `/*`:
+
+   ```json
+   "https://earnedtime.vercel.app/*"
+   ```
+
+   Then hit **Reload** on the extension card. Without the reload Chrome is still
+   running the old manifest, and the origin is not allowed yet — the manifest is
+   read at load time, not per message.
+
+   (`manifest.json` accepts `//` comments; Chrome strips them before parsing, so
+   the notes in that file are safe to keep and safe to edit around.)
+
+   **Skip either half and nothing breaks — it just gets slower.** No
+   `VITE_EXTENSION_ID`, an origin not listed in `externally_connectable`, a
+   browser with no extensions, or no extension at all: the hint is never
+   delivered, the app shows no error, and ending a session early re-blocks on
+   the worker's own one-minute poll (`pollMinutes`) instead of in about a
+   second. The block always comes back; this only decides how fast.
+
+   Two ways to tell it is actually working, on the deployed URL: end a session
+   early and watch a tab on a tracked site get evicted in a second or two rather
+   than up to a minute; or open the app's page, look at the DevTools console,
+   and confirm no "Could not establish connection" error appears — the app
+   swallows that one, but its absence together with a fast re-block is the
+   signal that the message landed.
 
 4. **Sign in.** Click the extension icon and enter the same email and password
    as the web app. There is no signup here. The session is stored in extension

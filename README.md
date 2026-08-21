@@ -39,8 +39,12 @@ built. Full spec in [`phase-1-spec.md`](phase-1-spec.md).
 
 ## Deploying
 
-Any static host works. The build output is `dist/`, and the app uses client-side
-routing, so every path must fall back to `index.html`:
+**[`DEPLOY.md`](DEPLOY.md) is the click-by-click walkthrough** — GitHub repo to
+a URL on your phone, on Vercel's free tier, including the Supabase auth settings
+and the iOS home-screen step.
+
+The short version, for any static host: the build output is `dist/`, and the app
+uses client-side routing, so every path must fall back to `index.html`.
 
 - **Vercel** — `vercel.json` already has the rewrite. Set `VITE_SUPABASE_URL`
   and `VITE_SUPABASE_ANON_KEY` in Project Settings → Environment Variables.
@@ -51,10 +55,15 @@ Vite inlines env vars at build time, so **set them before the build and
 redeploy after changing them**. A production build missing either one throws on
 load and shows a failure message rather than an app with no auth gate.
 
+Deploying the app deploys nothing to Supabase. The schema and its policies are
+set up separately, in the SQL editor (see **Setup** above).
+
 ## Using it
 
-- **iPhone:** open the deployed URL in Safari → Share → Add to Home Screen. It
-  installs as a standalone PWA.
+- **iPhone:** open the deployed URL in **Safari** (not Chrome) → Share → Add to
+  Home Screen. It installs as a standalone PWA — full screen, its own icon, dark
+  from the first frame. The installed app has its own storage, so you sign in
+  once more inside it.
 - **Laptop:** set the deployed URL as your browser homepage.
 
 Set `VITE_EXTENSION_ID` in `.env` (the id from `chrome://extensions`) so ending

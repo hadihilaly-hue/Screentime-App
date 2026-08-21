@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "EarnedTime Blocker",
-  "version": "0.5.0",
+  "version": "0.5.1",
   "description": "Blocks the tracked sites on the EarnedTime schedule, and unlocks one when you spend minutes on it.",
   "permissions": [
     "declarativeNetRequest",
@@ -12,10 +12,29 @@
   "host_permissions": [
     "<all_urls>"
   ],
+  // Origins allowed to send the sync-hint message (see README, "Ending a
+  // session early"). Chrome strips // comments from this file before parsing
+  // it, so these lines are safe to keep.
+  //
+  // The two entries below are http, because they are the Vite dev server.
+  // A deployed app is https, and https://host/* does NOT match http://host/* —
+  // so hosting the app on Vercel means adding its origin here. Replace the
+  // placeholder line with your real one, keeping the /* and the https:
+  //
+  //     "https://earnedtime.vercel.app/*"
+  //
+  // then hit Reload on the extension card in chrome://extensions. Until you do,
+  // ending a session early re-blocks on the one-minute poll instead of in about
+  // a second. Nothing else depends on it. Match patterns ignore ports, so one
+  // localhost entry covers 5173, 5174 and anything else.
   "externally_connectable": {
     "matches": [
       "http://localhost/*",
-      "http://127.0.0.1/*"
+      "http://127.0.0.1/*",
+      // PLACEHOLDER — replace with your deployed origin, e.g.
+      // "https://earnedtime.vercel.app/*". .invalid is a reserved TLD that can
+      // never be registered, so leaving this line as it is grants nothing.
+      "https://replace-with-your-vercel-domain.example.invalid/*"
     ]
   },
   "background": {
