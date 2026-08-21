@@ -83,13 +83,21 @@ window the loop is:
    20. Any length you cannot afford is disabled.
 3. You tap one. That single tap spends the minutes, writes the session row,
    drops the block, and sends you on to the URL you originally asked for.
-   **If the block does not actually lift, the minutes still go.** The economy
-   fails towards overcharging you, never towards a free unlock: a tap that is
-   definitively refused closes its session rather than refunding it, so it
-   cannot open the site later, and the block page says plainly that the minutes
-   are gone. Being short a few minutes is recoverable by finishing another task;
-   an unlock nobody paid for is the one thing this whole schedule exists to
-   prevent. (`extension/README.md` has the exact failure branches.)
+   **If the block does not actually lift, the minutes still go.** A tap that is
+   definitively refused — by the browser rejecting the rules, or by the worker's
+   own decision leaving the site blocked — is not refunded. Instead the session
+   is closed, so that it does not open the site later; that close is attempted
+   with capped retries rather than guaranteed, and the block page says which
+   happened, including when it could not confirm the close.
+
+   The bias is deliberate: where the economy has to fail, it should fail towards
+   overcharging you rather than towards a free unlock. Being short a few minutes
+   is recoverable by finishing another task; an unlock nobody paid for is the
+   thing this whole schedule exists to prevent. That is a bias and not a
+   guarantee — one hole is known and left open, because closing it needs the
+   debit and the insert in one transaction: an insert that commits but whose
+   response is lost refunds the minutes while its session row survives
+   (`extension/spend.js`). (`extension/README.md` has the exact branches.)
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
    built today. Ending early re-blocks within the poll interval (up to a
    minute), also as built today — the app cannot signal the extension, so the

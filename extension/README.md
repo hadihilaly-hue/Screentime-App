@@ -109,12 +109,20 @@ a session row exists, so the insert has to come before the rules drop. Deducting
 mid-start buying the same minutes twice — and the price of that choice is a
 window where the minutes are gone and the next step fails.
 
-**The policy in that window is deliberately one-sided: you may be overcharged,
-the site may never open for free.**
+**The policy in that window is deliberately one-sided: it prefers overcharging
+you to opening the site for free.** A bias, not a guarantee — the known
+exception is listed at the end of this section.
 
 - **The insert is rejected** → the minutes are refunded. Nothing exists yet, so
   the undo is a single write. (The refund is a compare-and-swap and can itself
   be refused if the balance moved; the page says so rather than pretending.)
+
+  **This is the one known free-unlock hole.** "Rejected" is inferred from the
+  call throwing, and an insert that commits server-side but whose response is
+  lost throws too — so the minutes come back while the session row survives, and
+  the worker will honour that row. Closing it needs the debit and the insert in
+  one transaction, which is a schema change and out of scope for Phase 1. It is
+  documented in `spend.js` at the catch that causes it.
 - **The release is definitively refused** → **the minutes stay spent.** Two
   things count as definitive, and both cost the minutes:
   - the browser rejecting the rules write, so the old rules survive; and

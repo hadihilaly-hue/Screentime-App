@@ -7,7 +7,8 @@
 // tradeoff rather than a requirement — only the insert has to precede the rules
 // drop — and its price is a window where the minutes are gone and the next step
 // fails. A rejected insert is refunded here, because at that point nothing has
-// been created and the undo is one write. A rejected *rules write* is not: see
+// been created and the undo is one write. A tap that is definitively refused —
+// by the rules write or by the worker's own decision — is not: see
 // closeRefusedSession.
 
 import { query, insert, patch, todayISO, getSession } from './supabase.js'
@@ -115,9 +116,10 @@ export async function startSession(site, minutes) {
     // answer was lost". A commit whose response times out lands here too, and
     // refunds minutes for a session that does exist. Closing that needs the
     // insert and the debit in one transaction, which is a schema change.
+    const said = String(e?.message ?? e)
     const refunded = await swapAvailable(stored.user_id, before - minutes, before).catch(() => false)
-    if (!refunded) throw new Error(`${e.message} — and the ${minutes} minutes could not be refunded.`)
-    throw new Error(`${e.message} No minutes were spent.`)
+    if (!refunded) throw new Error(`${said} — and the ${minutes} minutes could not be refunded.`)
+    throw new Error(`${said} No minutes were spent.`)
   }
 
   const endsAt = new Date(row[0].started_at).getTime() + minutes * 60_000
@@ -146,14 +148,14 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * left a live session and a restored balance) and then a retry that could never
  * complete the one failure that persisted (having closed the row, it could not
  * re-derive that it had, so it looped forever reporting the wrong cause). The
- * refund was the source of both, and it is buying very little: a rules write
- * the browser rejects is rare, and being charged for minutes you did not get is
+ * refund was the source of both, and it is buying very little: a definitive
+ * refusal — either route — is rare, and being charged for minutes you did not get is
  * recoverable by finishing another task. A free unlock is not recoverable — it
  * is the exact thing the schedule exists to prevent — so the policy is now
  * plainly one-sided. Overcharge on failure, never underlock.
  *
  * That leaves one job, which is worth retrying because it is what stops the
- * session unlocking the site later on a write that does succeed: end the row.
+ * session unlocking the site later on a check that does succeed: end the row.
  * Filtered on `ended_at=is.null`, so it can only ever close a running session,
  * never rewrite the end of a finished one (spec section 7).
  *
@@ -165,6 +167,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  *
  *   * visible and ended  → closed. The write was redundant, the goal is met.
  *   * visible and running → the write is being refused. Retry.
+ *   * signed out          → NOT closed, and no retry: the row is still running
+ *     and no number of attempts changes who is asking.
  *   * not visible        → NOT closed. There is no DELETE policy on sessions,
  *     so a missing row is never "gone" — it is "not ours to see", under the
  *     same predicate that filtered the write. The row may well still be
@@ -174,7 +178,10 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * Returns `{ closed, attempts, error }`. Never throws.
  */
 export async function closeRefusedSession(started) {
-  const { session } = started
+  const session = started?.session
+  // Guarded rather than destructured, so "never throws" is a property of the
+  // code and not of every caller remembering to pass a started session.
+  if (!session?.id) return { closed: false, attempts: 0, error: 'no session to close' }
   let error = null
 
   for (let attempt = 1; attempt <= CLOSE_ATTEMPTS; attempt++) {

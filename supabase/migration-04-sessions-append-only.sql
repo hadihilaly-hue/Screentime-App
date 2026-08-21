@@ -26,9 +26,6 @@
 --     where it previously succeeded by moving the end time. That write was the
 --     one this migration exists to stop, so the new error is correct; it is
 --     listed here because it is a real, if rare, user-visible change.
---   - closeRefusedSession (extension/spend.js) filters on ended_at is null and
---     already treats "zero rows" as "not running", which is the outcome it
---     wants.
 -- ============================================================================
 
 drop policy if exists sessions_update on public.sessions;
