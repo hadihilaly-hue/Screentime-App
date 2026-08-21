@@ -24,22 +24,19 @@ slightly off, the thing you are looking for is described as well as named.
 mysteriously ship old code.**
 
 Vercel builds one branch as production: whatever this repo's **default branch**
-is on GitHub. Right now that is `claude/earnedtime-folder-setup-nwm5p5`, and the
-work described in this file is on `claude/vercel-deploy-proof-of-work-63fz61`.
-Those are different branches, so out of the box Vercel would deploy the wrong
-one.
+is on GitHub. Here that is **`claude/earnedtime-folder-setup-nwm5p5`** — an
+unusual name for a default branch, which is exactly why it is worth checking
+rather than assuming `main`.
 
-Pick one of these before you import — either is fine:
+Everything in this guide lives on that branch, so the default is the right
+thing to deploy and there is nothing to change. **Confirm it before importing:**
+GitHub → the repo → the branch dropdown above the file list, or
+**Settings → General → Default branch**. If it says something else, either
+switch the default there or set **Project → Settings → Git → Production Branch**
+in Vercel to match — and after changing it in Vercel, trigger a redeploy
+(step 5), because changing the branch does not rebuild on its own.
 
-- **Merge first (simplest).** Merge `claude/vercel-deploy-proof-of-work-63fz61`
-  into the default branch on GitHub, and let Vercel use the default. Every later
-  push to that branch redeploys.
-- **Point Vercel at the feature branch.** Import as-is, then in
-  **Project → Settings → Git → Production Branch**, change it to
-  `claude/vercel-deploy-proof-of-work-63fz61` and click **Save**. Then trigger a
-  redeploy (step 5) — changing the branch does not rebuild on its own.
-
-Whichever you pick, note the branch name. You will confirm it in step 5.
+Note the branch name either way. You will confirm what actually built in step 5.
 
 ---
 
