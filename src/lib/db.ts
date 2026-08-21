@@ -155,6 +155,30 @@ export async function deleteTask(id: string): Promise<void> {
   }
 }
 
+/**
+ * Claim a task as verified, from a not-yet-verified state only.
+ *
+ * The `neq` is the guard against a double grant. completeTask credits after
+ * verifying, and a credit whose response is lost throws *after* the row may
+ * have committed — which used to leave the task rendered as todo with the
+ * button live, so a second tap re-verified it and credited the minutes again.
+ * A verify that has already happened now claims nothing, and the caller stops
+ * before touching the balance.
+ *
+ * Returns false when the task was already verified by someone or something else.
+ */
+async function claimTaskVerified(id: string): Promise<boolean> {
+  const db = requireClient()
+  const { data, error } = await db
+    .from('tasks')
+    .update({ status: 'verified', verified_at: new Date().toISOString() })
+    .eq('id', id)
+    .neq('status', 'verified')
+    .select('id')
+  if (error) throw error
+  return Boolean(data && data.length > 0)
+}
+
 /** Post-confirmation exit route: the task stays on the record as cancelled. */
 export async function cancelTask(id: string): Promise<void> {
   await updateTask(id, { status: 'cancelled' })
@@ -190,8 +214,8 @@ export async function getBalance(userId: string): Promise<Balance> {
 /**
  * Add `granted` minutes, but only if the balance still reads as `seen`.
  *
- * The filters carry both values that were read, so PostgREST updates nothing if
- * anything moved in between. Without that, this credit was a plain
+ * The filters carry the two counters this function writes, so PostgREST updates
+ * nothing if either of them moved in between. Without that, this credit was a plain
  * read-modify-write and could overwrite a debit: complete a task in the app
  * while the block page is spending, and the write built on the pre-spend
  * numbers puts the spent minutes back while the session row keeps running —
@@ -272,14 +296,24 @@ export async function completeTask(userId: string, task: Task): Promise<number> 
   // Verify first, credit second. If the credit then fails the task is done with
   // no minutes attached, which is the safe direction to fail: minutes granted
   // for a task that never got marked verified could be earned twice.
-  await updateTask(task.id, { status: 'verified', verified_at: new Date().toISOString() })
+  //
+  // The verify is a claim, not a write. Only the tap that moves the task out of
+  // its unverified state goes on to credit, so a retry after a credit whose
+  // answer was lost cannot pay for the same task twice.
+  if (!(await claimTaskVerified(task.id))) {
+    throw new Error(
+      'That task is already marked done. Reload to see whether the minutes landed.',
+    )
+  }
 
   // Two passes, not a loop. A second refusal means something else is actively
   // writing this balance, and quietly winning that race is how a credit
   // overwrites a debit. The cap is recomputed on the retry rather than reused,
   // because the grant that beat us to it may have taken the remaining room.
+  const seenAt: string[] = []
   for (let attempt = 0; attempt < 2; attempt++) {
     const seen = await readBalanceRow(userId)
+    seenAt.push(seen ? `${seen.minutes_available}/${seen.minutes_earned_total}` : 'none')
     // DAILY_CAP_MINUTES is mirrored by the balances_daily_cap CHECK constraint
     // in supabase/schema.sql. Tuning it (spec section 3 says to, after week 1)
     // means changing both, or the database will reject a grant this function
@@ -290,6 +324,17 @@ export async function completeTask(userId: string, task: Task): Promise<number> 
     if (await creditBalance(userId, seen, granted)) return granted
   }
 
+  // Two refusals with the balance reading the same both times is not a race —
+  // nothing moved. The row is readable but will not take the write, which in
+  // practice means RLS is filtering it. The extension's debit already draws
+  // this distinction rather than blaming a race that did not happen; the credit
+  // now does too.
+  if (seenAt[0] === seenAt[1]) {
+    throw new Error(
+      'Your balance would not accept the minutes for that task. ' +
+        'Check you are signed in as the same account, then reload.',
+    )
+  }
   throw new Error(
     'Your balance changed while that was saving, so the minutes were not added. ' +
       'Reload to see where it stands.',

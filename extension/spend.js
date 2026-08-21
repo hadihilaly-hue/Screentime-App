@@ -33,7 +33,14 @@ export async function readBalance() {
  *
  * This narrows the window to the round trip; it does not close it. The real fix
  * is doing the arithmetic in Postgres, which is a schema change and out of
- * scope here — src/lib/db.ts still has the same read-modify-write.
+ * scope here. The app's credit (completeTask in src/lib/db.ts) is a
+ * compare-and-swap on the same row, so the two live writers cannot overwrite
+ * each other.
+ *
+ * Note the filter is on minutes_available alone. That is sufficient only while
+ * every credit moves minutes_available as well as minutes_earned_total — a
+ * future writer that moved the earned total by itself (all_tasks_bonus is the
+ * obvious candidate, and nothing sets it yet) would slip past this filter.
  */
 async function swapAvailable(userId, from, to) {
   const rows = await patch(
@@ -156,7 +163,8 @@ const delay = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * law; the insert path below documents the case that still goes the other way.
  *
  * That leaves one job, which is worth retrying because it is what stops the
- * session unlocking the site on a later sync that succeeds: end the row.
+ * session unlocking the site on a later check, once whatever refused it clears:
+ * end the row.
  * Filtered on `ended_at=is.null`, so it can only ever close a running session,
  * never rewrite the end of a finished one (spec section 7).
  *

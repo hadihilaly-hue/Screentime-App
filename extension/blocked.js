@@ -448,7 +448,8 @@ async function pick(minutes) {
     // Paid for, and definitively still blocked. The minutes are NOT refunded —
     // see closeRefusedSession for why that is deliberate. What is worth doing
     // is trying to close the row, so this tap does not unlock the site on a
-    // later sync that succeeds. It is an attempt, not a guarantee, and the
+    // later check, once whatever refused it clears — a rules write that lands
+    // next time, or a corrected app_name. It is an attempt, not a guarantee, and the
     // message below says which of the two happened — including that the minutes
     // are gone. Blaming something else, or promising a refund that may not
     // arrive, is worse than the honest version.

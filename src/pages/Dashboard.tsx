@@ -145,11 +145,16 @@ export default function Dashboard({ userId }: { userId: string }) {
       } else if (granted < TIER_MINUTES[task.tier]) {
         setNotice(`Done — ${granted} min added instead of ${TIER_MINUTES[task.tier]}, the daily cap is close.`)
       }
-      await reload()
     } catch (e) {
       errorSource.current = 'action'
       setError((e as Error).message)
     }
+
+    // Refreshed whether or not the write threw. A completeTask that fails part
+    // way can still have marked the task verified — leaving it rendered as todo
+    // with the button live is what invited the second tap in the first place.
+    // reload() handles its own errors and will not overwrite the banner above.
+    await reload()
     busyRef.current = false
     setBusy(false)
   }

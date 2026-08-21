@@ -95,13 +95,19 @@ window the loop is:
    is recoverable by finishing another task; an unlock nobody paid for is what
    this whole schedule exists to prevent.
 
-   It is a lean rather than a property the code guarantees. Both writers of the
-   balance — the extension's debit and the app's credit for a verified task —
-   are compare-and-swaps, so neither can silently overwrite the other. What is
-   still open is listed under **Known holes** in `extension/README.md`, which
-   also has the exact failure branches; the short version is that a session
-   insert whose response is lost cannot be told apart from one that failed, so
-   it can be refunded while its row survives.
+   It is a lean rather than a property the code guarantees. The balance has
+   three writers in the repo: the extension's debit and the app's credit for a
+   verified task, both compare-and-swaps, so neither of those can silently
+   overwrite the other; and `writeBalance`, a plain upsert reachable only from
+   the deprecated `startSession`, which has no callers and is kept because the
+   phone half of Phase 1 will need a session-start path of its own. If it is
+   ever woken up it needs the same treatment first.
+
+   What is known to be open is listed under **Known holes** in
+   `extension/README.md`, which also has the exact failure branches; the short
+   version is that a session insert whose response is lost cannot be told apart
+   from one that failed, so it can be refunded while its row survives. That list
+   is what is known, not a proof that nothing else exists.
 4. When it expires the site re-blocks and open tabs are evicted, exactly as
    built today. Ending early re-blocks within the poll interval (up to a
    minute), also as built today — the app cannot signal the extension, so the
