@@ -10,3 +10,4 @@ extension/config.js
 # scratch browser-test scripts (never part of the app)
 _rvw_*.mjs
 exttest*.mjs
+supabase/.temp/

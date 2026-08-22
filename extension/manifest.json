@@ -12,13 +12,13 @@
   "host_permissions": [
     "<all_urls>"
   ],
-  "externally_connectable": {
-    "matches": [
-      "http://localhost/*",
-      "http://127.0.0.1/*",
-      "https://replace-with-your-vercel-domain.example.invalid/*"
-    ]
-  },
+"externally_connectable": {
+  "matches": [
+    "http://localhost/*",
+    "http://127.0.0.1/*",
+    "https://screentime-app-orpin.vercel.app/*"
+  ]
+},
   "background": {
     "service_worker": "background.js",
     "type": "module"
